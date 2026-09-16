@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Leitor Multi-ZIP eSocial (Consolidado Anual)</title>
+  <title>Leitor Global eSocial (XMLs Soltos & ZIPs)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
   <style>
@@ -53,15 +53,15 @@
 
 <div class="container">
   <header>
-    <h1>Leitor Multi-ZIP eSocial (Consolidado Anual)</h1>
-    <p class="subtitle">Selecione múltiplos arquivos ZIP (ex: os 12 meses do ano) para mapeamento global de rubricas.</p>
+    <h1>Leitor Global eSocial (XMLs & ZIPs)</h1>
+    <p class="subtitle">Selecione ou arraste milhares de arquivos .XML soltos ou arquivos .ZIP do ano inteiro.</p>
   </header>
 
   <div class="card">
     <div class="dropzone" id="dropzone">
-      <strong style="color: var(--primary);">Selecione ou arraste um ou VÁRIOS arquivos .ZIP aqui</strong>
-      <p>Você pode selecionar os 12 pacotes ZIP do ano de uma só vez!</p>
-      <input type="file" id="fileInput" accept=".zip,.ZIP" multiple style="display:none;">
+      <strong style="color: var(--primary);">Selecione ou arraste seus arquivos .XML ou .ZIP aqui</strong>
+      <p>Você pode selecionar milhares de arquivos XML soltos de uma vez!</p>
+      <input type="file" id="fileInput" accept=".xml,.XML,.zip,.ZIP" multiple style="display:none;">
     </div>
 
     <div class="progress-box" id="progressBox">
@@ -69,14 +69,14 @@
         <div class="progress-bar-fill" id="progressFill"></div>
       </div>
       <div class="status-text">
-        <span id="statusLabel">Lendo estrutura dos ZIPs...</span>
+        <span id="statusLabel">Lendo arquivos...</span>
         <span id="statusPercent">0%</span>
       </div>
     </div>
 
     <div class="log-box" id="logBox"></div>
 
-    <button class="btn" id="startBtn" disabled>Processar Lotes ZIP e Gerar Excel Consolidado</button>
+    <button class="btn" id="startBtn" disabled>Processar Lotes e Gerar Excel Consolidado</button>
   </div>
 </div>
 
@@ -106,26 +106,38 @@
   dropzone.addEventListener('click', () => fileInput.click());
   dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-  dropzone.addEventListener('drop', (e) => {
+  
+  dropzone.addEventListener('drop', async (e) => {
     e.preventDefault();
     dropzone.classList.remove('dragover');
     if (e.dataTransfer.files.length > 0) {
-      selectedFiles = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.zip'));
+      selectedFiles = Array.from(e.dataTransfer.files).filter(f => 
+        f.name.toLowerCase().endsWith('.xml') || f.name.toLowerCase().endsWith('.zip')
+      );
       updateFileInputLabel();
     }
   });
 
   fileInput.addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
-      selectedFiles = Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.zip'));
+      selectedFiles = Array.from(e.target.files).filter(f => 
+        f.name.toLowerCase().endsWith('.xml') || f.name.toLowerCase().endsWith('.zip')
+      );
       updateFileInputLabel();
     }
   });
 
   function updateFileInputLabel() {
     if (selectedFiles.length > 0) {
-      const totalSizeMB = (selectedFiles.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
-      dropzone.querySelector('strong').innerText = `${selectedFiles.length} arquivo(s) ZIP selecionado(s) (${totalSizeMB} MB total)`;
+      const xmlCount = selectedFiles.filter(f => f.name.toLowerCase().endsWith('.xml')).length;
+      const zipCount = selectedFiles.filter(f => f.name.toLowerCase().endsWith('.zip')).length;
+      const totalMB = (selectedFiles.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
+      
+      let infoText = [];
+      if (xmlCount > 0) infoText.push(`${xmlCount.toLocaleString('pt-BR')} arquivo(s) XML`);
+      if (zipCount > 0) infoText.push(`${zipCount} arquivo(s) ZIP`);
+
+      dropzone.querySelector('strong').innerText = `${infoText.join(' e ')} selecionado(s) (${totalMB} MB total)`;
       startBtn.disabled = false;
     }
   }
@@ -153,171 +165,187 @@
     return nodes.length > 0 ? nodes[0].textContent.trim() : '';
   }
 
+  // Helper para ler conteúdo de arquivo texto via Promise
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    });
+  }
+
   startBtn.addEventListener('click', async () => {
     try {
       startBtn.disabled = true;
       progressBox.style.display = 'block';
       logBox.innerHTML = '';
-      log(`Iniciando processamento consolidado de ${selectedFiles.length} pacote(s) ZIP...`);
+      log(`Iniciando processamento de ${selectedFiles.length.toLocaleString('pt-BR')} arquivo(s)...`);
 
       const parser = new DOMParser();
       const rubricasMap = new Map();
       const linhasPlanilha = [];
 
-      // PASSO 1: Indexar e Mapear TODAS as Rubricas S-1010 de TODOS os ZIPs
-      log("Etapa 1/2: Construindo Catálogo Global de Rubricas S-1010 de todos os ZIPs...");
-      let zipIndex = 0;
+      // Unifica a lista de todos os XMLs (tanto soltos quanto de dentro dos ZIPs)
+      const xmlList = []; // { source: string, name: string, getText: fn }
 
-      for (let zipFile of selectedFiles) {
-        zipIndex++;
-        log(`Indexando ZIP ${zipIndex}/${selectedFiles.length}: ${zipFile.name}...`);
-        
-        try {
-          const zip = await JSZip.loadAsync(zipFile);
-          const allEntries = Object.keys(zip.files).filter(fileName => !zip.files[fileName].dir);
-
-          let countInZip = 0;
-          for (let fileName of allEntries) {
-            countInZip++;
-
-            try {
-              const xmlText = await zip.files[fileName].async('string');
-
-              if (xmlText.includes('evtTabRubrica') || xmlText.includes('infoRubrica')) {
-                const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-                const evts = queryNodes(xmlDoc, 'evtTabRubrica').concat(queryNodes(xmlDoc, 'infoRubrica'));
-
-                evts.forEach(evt => {
-                  const codRubr = getNodeVal(evt, 'codRubr');
-                  const dscRubr = getNodeVal(evt, 'dscRubr');
-                  const natRubr = getNodeVal(evt, 'natRubr');
-
-                  if (codRubr) {
-                    const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
-                    rubricasMap.set(codRubr, {
-                      descricao: dscRubr,
-                      natureza: natRubr,
-                      verbaIndenizatoria: verbaIndenizatoria
-                    });
-                  }
-                });
-              }
-            } catch (e) {}
-
-            if (countInZip % 3000 === 0 || countInZip === allEntries.length) {
-              const pct = Math.round(((zipIndex - 1 + (countInZip / allEntries.length)) / selectedFiles.length) * 35);
-              progressFill.style.width = `${pct}%`;
-              statusPercent.innerText = `${pct}%`;
-              statusLabel.innerText = `Mapeando Rubricas (${zipIndex}/${selectedFiles.length}): ${countInZip.toLocaleString('pt-BR')} arquivos`;
-              await new Promise(r => setTimeout(r, 0));
-            }
+      log("Etapa 1/3: Mapeando arquivos selecionados e descompactando ZIPs...");
+      
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        if (file.name.toLowerCase().endsWith('.xml')) {
+          xmlList.push({
+            source: 'XML Solto',
+            name: file.name,
+            getText: () => readFileAsText(file)
+          });
+        } else if (file.name.toLowerCase().endsWith('.zip')) {
+          try {
+            const zip = await JSZip.loadAsync(file);
+            const entries = Object.keys(zip.files).filter(f => !zip.files[f].dir && f.toLowerCase().endsWith('.xml'));
+            entries.forEach(entry => {
+              xmlList.push({
+                source: file.name,
+                name: entry.split('/').pop(),
+                getText: () => zip.files[entry].async('string')
+              });
+            });
+          } catch (e) {
+            log(`Aviso ao abrir ZIP ${file.name}: ${e.message}`, '#f87171');
           }
-        } catch (zipErr) {
-          log(`Aviso: Erro ao abrir arquivo ${zipFile.name}: ${zipErr.message}`, '#f87171');
         }
       }
 
-      log(`Etapa 1 Concluída! Total de Rubricas Únicas Catalogadas: ${rubricasMap.size.toLocaleString('pt-BR')}`, '#4ade80');
+      log(`Total de XMLs identificados para análise: ${xmlList.length.toLocaleString('pt-BR')}`, '#4ade80');
 
-      // PASSO 2: Varre todos os ZIPs extraindo as Folhas e cruzando com o Catálogo
-      log("Etapa 2/2: Extraindo lançamentos da folha cruzando com a Tabela Global de Rubricas...");
-      zipIndex = 0;
+      // PASSO 2: Indexar Tabela S-1010 em Todos os XMLs
+      log("Etapa 2/3: Construindo Catálogo Global de Rubricas (S-1010)...");
+      let processedCount = 0;
 
-      for (let zipFile of selectedFiles) {
-        zipIndex++;
-        log(`Processando Folhas do ZIP ${zipIndex}/${selectedFiles.length}: ${zipFile.name}...`);
-
+      for (let item of xmlList) {
+        processedCount++;
         try {
-          const zip = await JSZip.loadAsync(zipFile);
-          const allEntries = Object.keys(zip.files).filter(fileName => !zip.files[fileName].dir);
+          const xmlText = await item.getText();
 
-          let countInZip = 0;
-          for (let fileName of allEntries) {
-            countInZip++;
+          if (xmlText.includes('evtTabRubrica') || xmlText.includes('infoRubrica')) {
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+            const evts = queryNodes(xmlDoc, 'evtTabRubrica').concat(queryNodes(xmlDoc, 'infoRubrica'));
 
-            try {
-              const xmlText = await zip.files[fileName].async('string');
+            evts.forEach(evt => {
+              const codRubr = getNodeVal(evt, 'codRubr');
+              const dscRubr = getNodeVal(evt, 'dscRubr');
+              const natRubr = getNodeVal(evt, 'natRubr');
 
-              if (
-                xmlText.includes('evtRemun') || 
-                xmlText.includes('evtPgtos') || 
-                xmlText.includes('evtRscResc') ||
-                xmlText.includes('evtTSVE') ||
-                xmlText.includes('itensRemun') ||
-                xmlText.includes('detPgto') ||
-                xmlText.includes('dmDev')
-              ) {
-                const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-
-                const ideEmpregador = queryNodes(xmlDoc, 'ideEmpregador')[0];
-                const cnpjEmpregador = ideEmpregador ? (getNodeVal(ideEmpregador, 'nrInsc') || getNodeVal(ideEmpregador, 'nrInscEstab')) : getNodeVal(xmlDoc, 'nrInsc');
-
-                const cpfTrabalhador = getNodeVal(xmlDoc, 'cpfTrab');
-                const perApur = getNodeVal(xmlDoc, 'perApur') || getNodeVal(xmlDoc, 'perRef');
-
-                const itensRemun = [
-                  ...queryNodes(xmlDoc, 'itensRemun'),
-                  ...queryNodes(xmlDoc, 'detPgto'),
-                  ...queryNodes(xmlDoc, 'detVerbras')
-                ];
-
-                if (itensRemun.length > 0) {
-                  itensRemun.forEach(item => {
-                    const codRubr = getNodeVal(item, 'codRubr') || getNodeVal(item, 'tpPgto');
-                    const vrRubr = getNodeVal(item, 'vrRubr') || getNodeVal(item, 'vrPgto') || '0';
-                    const natRubrXml = getNodeVal(item, 'natRubr');
-
-                    if (codRubr || vrRubr !== '0') {
-                      const infoRubrica = rubricasMap.get(codRubr) || {
-                        descricao: "Não cadastrada na Tabela de Rubricas",
-                        natureza: natRubrXml || "N/A",
-                        verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
-                      };
-
-                      linhasPlanilha.push({
-                        PacoteZip: zipFile.name,
-                        ArquivoXML: fileName.split('/').pop(),
-                        CNPJEmpregador: cnpjEmpregador,
-                        CPFTrabalhador: cpfTrabalhador,
-                        PeriodoApuracao: perApur,
-                        CodigoRubrica: codRubr,
-                        NomeRubrica: infoRubrica.descricao,
-                        CodigoNatureza: infoRubrica.natureza,
-                        VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
-                        ValorRubrica: parseFloat(vrRubr.replace(',', '.')) || 0
-                      });
-                    }
-                  });
-                }
+              if (codRubr) {
+                const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
+                rubricasMap.set(codRubr, {
+                  descricao: dscRubr,
+                  natureza: natRubr,
+                  verbaIndenizatoria: verbaIndenizatoria
+                });
               }
-            } catch (errItem) {}
-
-            if (countInZip % 2000 === 0 || countInZip === allEntries.length) {
-              const pct = 35 + Math.round(((zipIndex - 1 + (countInZip / allEntries.length)) / selectedFiles.length) * 65);
-              progressFill.style.width = `${pct}%`;
-              statusPercent.innerText = `${pct}%`;
-              statusLabel.innerText = `Lendo Folhas (${zipIndex}/${selectedFiles.length}): ${countInZip.toLocaleString('pt-BR')} arquivos`;
-              await new Promise(r => setTimeout(r, 0));
-            }
+            });
           }
-        } catch (zipErr) {}
+        } catch (e) {}
+
+        if (processedCount % 3000 === 0 || processedCount === xmlList.length) {
+          const pct = Math.round((processedCount / xmlList.length) * 35);
+          progressFill.style.width = `${pct}%`;
+          statusPercent.innerText = `${pct}%`;
+          statusLabel.innerText = `Mapeando Rubricas: ${processedCount.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
+          await new Promise(r => setTimeout(r, 0));
+        }
       }
 
-      log(`Processamento concluído! Total de registros financeiros extraídos: ${linhasPlanilha.length.toLocaleString('pt-BR')}`, '#4ade80');
+      log(`Catálogo de Rubricas Concluído! Total de Rubricas Únicas: ${rubricasMap.size.toLocaleString('pt-BR')}`, '#4ade80');
+
+      // PASSO 3: Extrair Dados Financeiros da Folha
+      log("Etapa 3/3: Extraindo lançamentos financeiros das Folhas de Pagamento...");
+      processedCount = 0;
+
+      for (let item of xmlList) {
+        processedCount++;
+        try {
+          const xmlText = await item.getText();
+
+          if (
+            xmlText.includes('evtRemun') || 
+            xmlText.includes('evtPgtos') || 
+            xmlText.includes('evtRscResc') ||
+            xmlText.includes('evtTSVE') ||
+            xmlText.includes('itensRemun') ||
+            xmlText.includes('detPgto') ||
+            xmlText.includes('dmDev')
+          ) {
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+
+            const ideEmpregador = queryNodes(xmlDoc, 'ideEmpregador')[0];
+            const cnpjEmpregador = ideEmpregador ? (getNodeVal(ideEmpregador, 'nrInsc') || getNodeVal(ideEmpregador, 'nrInscEstab')) : getNodeVal(xmlDoc, 'nrInsc');
+
+            const cpfTrabalhador = getNodeVal(xmlDoc, 'cpfTrab');
+            const perApur = getNodeVal(xmlDoc, 'perApur') || getNodeVal(xmlDoc, 'perRef');
+
+            const itensRemun = [
+              ...queryNodes(xmlDoc, 'itensRemun'),
+              ...queryNodes(xmlDoc, 'detPgto'),
+              ...queryNodes(xmlDoc, 'detVerbras')
+            ];
+
+            if (itensRemun.length > 0) {
+              itensRemun.forEach(itemNode => {
+                const codRubr = getNodeVal(itemNode, 'codRubr') || getNodeVal(itemNode, 'tpPgto');
+                const vrRubr = getNodeVal(itemNode, 'vrRubr') || getNodeVal(itemNode, 'vrPgto') || '0';
+                const natRubrXml = getNodeVal(itemNode, 'natRubr');
+
+                if (codRubr || vrRubr !== '0') {
+                  const infoRubrica = rubricasMap.get(codRubr) || {
+                    descricao: "Não cadastrada na Tabela de Rubricas",
+                    natureza: natRubrXml || "N/A",
+                    verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
+                  };
+
+                  linhasPlanilha.push({
+                    Origem: item.source,
+                    ArquivoXML: item.name,
+                    CNPJEmpregador: cnpjEmpregador,
+                    CPFTrabalhador: cpfTrabalhador,
+                    PeriodoApuracao: perApur,
+                    CodigoRubrica: codRubr,
+                    NomeRubrica: infoRubrica.descricao,
+                    CodigoNatureza: infoRubrica.natureza,
+                    VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
+                    ValorRubrica: parseFloat(vrRubr.replace(',', '.')) || 0
+                  });
+                }
+              });
+            }
+          }
+        } catch (e) {}
+
+        if (processedCount % 3000 === 0 || processedCount === xmlList.length) {
+          const pct = 35 + Math.round((processedCount / xmlList.length) * 65);
+          progressFill.style.width = `${pct}%`;
+          statusPercent.innerText = `${pct}%`;
+          statusLabel.innerText = `Processando Folhas: ${processedCount.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+
+      log(`Processamento concluído! Registros financeiros extraídos: ${linhasPlanilha.length.toLocaleString('pt-BR')}`, '#4ade80');
 
       if (linhasPlanilha.length === 0) {
-        log("Aviso: Nenhuma linha financeira foi identificada nos arquivos do(s) ZIP(s).", '#f87171');
+        log("Aviso: Nenhuma informação de folha foi encontrada nos XMLs.", '#f87171');
         startBtn.disabled = false;
         return;
       }
 
-      // PASSO 3: Exportar para Excel (.xlsx)
-      log("Gerando e formatando planilha Excel consolidada (.xlsx)...");
+      // PASSO 4: Gerar Planilha Excel
+      log("Gerando arquivo Excel (.xlsx)...");
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Lançamentos Consolidados');
 
       worksheet.columns = [
-        { header: 'Pacote ZIP Origem', key: 'PacoteZip', width: 25 },
+        { header: 'Origem (ZIP / Solto)', key: 'Origem', width: 25 },
         { header: 'Nome Arquivo XML', key: 'ArquivoXML', width: 35 },
         { header: 'CNPJ Empregador', key: 'CNPJEmpregador', width: 18 },
         { header: 'CPF Trabalhador', key: 'CPFTrabalhador', width: 16 },
@@ -342,7 +370,7 @@
       a.download = `Resultado_Consolidado_eSocial_${new Date().toISOString().slice(0, 10)}.xlsx`;
       a.click();
 
-      log("Planilha consolidada baixada com sucesso!", '#4ade80');
+      log("Planilha baixada com sucesso!", '#4ade80');
       statusLabel.innerText = "Concluído com Sucesso!";
       startBtn.disabled = false;
 
