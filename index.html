@@ -1,11 +1,9 @@
-import os
-
-html_code = """<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Processador de XMLs eSocial - Folha de Pagamento</title>
+  <title>Processador de XMLs eSocial - Folha & Rubricas</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/fast-xml-parser@4.2.5/lib/fxp.min.js"></script>
@@ -18,7 +16,6 @@ html_code = """<!DOCTYPE html>
       --text-main: #0f172a;
       --text-muted: #64748b;
       --border: #e2e8f0;
-      --success: #16a34a;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -143,12 +140,11 @@ html_code = """<!DOCTYPE html>
     log("Iniciando leitura dos XMLs...");
 
     const fxParser = new fxp.XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-    const rubricasMap = new Map(); // Guarda S-1010: CodigoRubrica -> { Nome, Natureza, VerbaIndenizatoria }
-    const linhasPlanilha = []; // Registros extraídos para a planilha
+    const rubricasMap = new Map();
+    const linhasPlanilha = [];
 
     let xmlFiles = [];
 
-    // Descompacta se houver arquivos ZIP
     for (let f of selectedFiles) {
       if (f.name.endsWith('.zip')) {
         log(`Descompactando ZIP: ${f.name}`);
@@ -167,7 +163,7 @@ html_code = """<!DOCTYPE html>
 
     log(`Total de ${xmlFiles.length} arquivos XML para processar.`);
 
-    // PASSO 1: Mapear todas as rubricas (Eventos S-1010)
+    // PASSO 1: Mapear todas as rubricas (S-1010)
     xmlFiles.forEach((file) => {
       try {
         const parsed = fxParser.parse(file.content);
@@ -191,14 +187,12 @@ html_code = """<!DOCTYPE html>
             });
           }
         }
-      } catch (err) {
-        // Ignora falhas de parse de arquivos individuais
-      }
+      } catch (err) {}
     });
 
     log(`Mapeamento S-1010 finalizado: ${rubricasMap.size} rubricas catalogadas.`);
 
-    // PASSO 2: Extrair movimentações da folha (S-1200 / S-1210 / S-1202 / etc.)
+    // PASSO 2: Extrair movimentações da folha (S-1200 / S-1210 / etc.)
     let processedCount = 0;
 
     for (let file of xmlFiles) {
@@ -212,7 +206,6 @@ html_code = """<!DOCTYPE html>
         const parsed = fxParser.parse(file.content);
         const esocial = parsed.eSocial || {};
 
-        // Processa S-1200 (Remuneração de Trabalhador) ou S-1210 (Pagamentos)
         const evtRemun = esocial.evtRemunPkey || esocial.evtRemun || esocial.evtPgtos;
         
         if (evtRemun) {
@@ -222,13 +215,11 @@ html_code = """<!DOCTYPE html>
           const cpf = ideTrabalhador.cpfTrab || '';
           const perApur = evtRemun.ideEvento ? evtRemun.ideEvento.perApur : '';
 
-          // Navega pelas seções de itens de remuneração
           let itens = [];
           const dmDev = evtRemun.dmDev || evtRemun.infoPgto || [];
           const listDmDev = Array.isArray(dmDev) ? dmDev : [dmDev];
 
           listDmDev.forEach(dm => {
-            const codCateg = dm.codCateg || '';
             const infoPerApur = dm.infoPerApur || dm.infoPerAnt || {};
             const ideEstab = infoPerApur.ideEstab || dm.ideEstab || [];
             const listEstab = Array.isArray(ideEstab) ? ideEstab : [ideEstab];
@@ -241,7 +232,6 @@ html_code = """<!DOCTYPE html>
                 const codRubr = it.codRubr || it.tpPgto || '';
                 const vrRubr = it.vrRubr || it.vrPgto || 0;
                 
-                // Busca o cruzamento na tabela de rubricas
                 const infoRubrica = rubricasMap.get(codRubr) || {
                   descricao: "Desconhecida (Sem S-1010)",
                   natureza: "N/A",
@@ -263,17 +253,15 @@ html_code = """<!DOCTYPE html>
             });
           });
         }
-      } catch (err) {
-        // Ignora erros específicos do XML
-      }
+      } catch (err) {}
     }
 
-    log(`Extração concluída: ${linhasPlanilha.length} linhas de movimentação geradas.`);
-    log("Montando arquivo Excel (.xlsx)...");
+    log(`Extração concluída: ${linhasPlanilha.length} linhas geradas.`);
+    log("Gerando arquivo Excel (.xlsx)...");
 
-    // PASSO 3: Gerar arquivo Excel (.xlsx) usando ExcelJS
+    // PASSO 3: Exportar para Excel
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Folha & Rubricas Cruzadas');
+    const worksheet = workbook.addWorksheet('Folha & Rubricas');
 
     worksheet.columns = [
       { header: 'Arquivo XML', key: 'Arquivo', width: 25 },
@@ -287,19 +275,17 @@ html_code = """<!DOCTYPE html>
       { header: 'Valor (R$)', key: 'ValorRubrica', width: 16, style: { numFmt: '"R$"#,##0.00' } }
     ];
 
-    // Estilizar o cabeçalho
     worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
     worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E3A8A' } };
 
     linhasPlanilha.forEach(linha => worksheet.addRow(linha));
 
-    // Exporta o arquivo para o navegador
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Resultado_XMLs_Rubricas_eSocial_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.download = `Resultado_XMLs_Rubricas_eSocial.xlsx`;
     a.click();
 
     log("Planilha baixada com sucesso!");
@@ -309,10 +295,3 @@ html_code = """<!DOCTYPE html>
 </script>
 </body>
 </html>
-"""
-
-os.makedirs("output", exist_ok=True)
-with open("output/index.html", "w", encoding="utf-8") as f:
-    f.write(html_code)
-
-print("HTML gerado com sucesso!")
