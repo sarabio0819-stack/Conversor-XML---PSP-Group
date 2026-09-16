@@ -1,0 +1,318 @@
+import os
+
+html_code = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Processador de XMLs eSocial - Folha de Pagamento</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fast-xml-parser@4.2.5/lib/fxp.min.js"></script>
+  <style>
+    :root {
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg-color); color: var(--text-main); padding: 40px 20px; display: flex; justify-content: center; }
+    .container { max-width: 800px; width: 100%; }
+    header { margin-bottom: 24px; text-align: center; }
+    h1 { font-size: 1.75rem; color: var(--text-main); font-weight: 700; margin-bottom: 8px; }
+    p.subtitle { color: var(--text-muted); font-size: 0.95rem; }
+
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    
+    .dropzone {
+      border: 2px dashed #cbd5e1; border-radius: 8px; padding: 40px 20px; text-align: center; background: #f1f5f9; cursor: pointer; transition: all 0.2s;
+    }
+    .dropzone:hover, .dropzone.dragover { border-color: var(--primary); background: #eff6ff; }
+    .dropzone p { color: var(--text-muted); font-size: 0.9rem; margin-top: 8px; }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; background: var(--primary); color: white; border: none; padding: 12px 24px;
+      font-size: 0.95rem; font-weight: 600; border-radius: 6px; cursor: pointer; width: 100%; transition: background 0.2s; margin-top: 16px;
+    }
+    .btn:hover { background-color: var(--primary-hover); }
+    .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
+
+    .progress-box { margin-top: 16px; display: none; }
+    .progress-bar-bg { background: #e2e8f0; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 8px; }
+    .progress-bar-fill { background: var(--primary); height: 100%; width: 0%; transition: width 0.1s; }
+    .status-text { font-size: 0.85rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+
+    .log-box {
+      background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 6px; height: 140px; overflow-y: auto; margin-top: 16px; display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Leitor de XMLs eSocial (Folha & Rubricas)</h1>
+    <p class="subtitle">Importe o lote de XMLs (S-1010, S-1200, S-1210) ou arquivo ZIP para cruzar verbas e extrair a planilha.</p>
+  </header>
+
+  <div class="card">
+    <div class="dropzone" id="dropzone">
+      <strong style="color: var(--primary);">Clique ou arraste seus arquivos XML / ZIP aqui</strong>
+      <p>Suporta múltiplos XMLs ou pasta compactada de até 5 anos</p>
+      <input type="file" id="fileInput" multiple accept=".xml,.zip" style="display:none;">
+    </div>
+
+    <div class="progress-box" id="progressBox">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+      <div class="status-text">
+        <span id="statusLabel">Lendo arquivos...</span>
+        <span id="statusPercent">0%</span>
+      </div>
+    </div>
+
+    <div class="log-box" id="logBox"></div>
+
+    <button class="btn" id="startBtn" disabled>Processar e Gerar Planilha XLSX</button>
+  </div>
+</div>
+
+<script>
+  // Tabela de De-Para: Naturezas do eSocial vs. Enquadramento da Verba Indenizatória
+  const DE_PARA_VERBAS = {
+    "1020": "Aviso Prévio Indenizado",
+    "1022": "Terço Constitucional de Férias",
+    "1004": "Ajuda de Custo",
+    "1009": "Ressarcimento de Despesas / EPI",
+    "1050": "Salário Maternidade",
+    "6000": "Indenização / Rescisão Contratual",
+    "6001": "Indenização Art. 477 CLT",
+    "6002": "Indenização Art. 479 CLT"
+  };
+
+  const fileInput = document.getElementById('fileInput');
+  const dropzone = document.getElementById('dropzone');
+  const startBtn = document.getElementById('startBtn');
+  const progressBox = document.getElementById('progressBox');
+  const progressFill = document.getElementById('progressFill');
+  const statusLabel = document.getElementById('statusLabel');
+  const statusPercent = document.getElementById('statusPercent');
+  const logBox = document.getElementById('logBox');
+
+  let selectedFiles = [];
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    selectedFiles = Array.from(e.dataTransfer.files);
+    updateFileInputLabel();
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    selectedFiles = Array.from(e.target.files);
+    updateFileInputLabel();
+  });
+
+  function updateFileInputLabel() {
+    if (selectedFiles.length > 0) {
+      dropzone.querySelector('strong').innerText = `${selectedFiles.length} arquivo(s) selecionado(s)`;
+      startBtn.disabled = false;
+    }
+  }
+
+  function log(msg) {
+    logBox.style.display = 'block';
+    logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true;
+    progressBox.style.display = 'block';
+    logBox.innerHTML = '';
+    log("Iniciando leitura dos XMLs...");
+
+    const fxParser = new fxp.XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
+    const rubricasMap = new Map(); // Guarda S-1010: CodigoRubrica -> { Nome, Natureza, VerbaIndenizatoria }
+    const linhasPlanilha = []; // Registros extraídos para a planilha
+
+    let xmlFiles = [];
+
+    // Descompacta se houver arquivos ZIP
+    for (let f of selectedFiles) {
+      if (f.name.endsWith('.zip')) {
+        log(`Descompactando ZIP: ${f.name}`);
+        const zip = await JSZip.loadAsync(f);
+        for (let relativePath in zip.files) {
+          if (relativePath.endsWith('.xml')) {
+            const content = await zip.files[relativePath].async('string');
+            xmlFiles.push({ name: relativePath, content });
+          }
+        }
+      } else if (f.name.endsWith('.xml')) {
+        const content = await f.text();
+        xmlFiles.push({ name: f.name, content });
+      }
+    }
+
+    log(`Total de ${xmlFiles.length} arquivos XML para processar.`);
+
+    // PASSO 1: Mapear todas as rubricas (Eventos S-1010)
+    xmlFiles.forEach((file) => {
+      try {
+        const parsed = fxParser.parse(file.content);
+        const esocial = parsed.eSocial || parsed.eSocialObj || {};
+        
+        if (esocial.evtTabRubrica) {
+          const info = esocial.evtTabRubrica.infoRubrica || {};
+          const dados = info.inclusao || info.alteracao || {};
+          const dadosRubrica = dados.dadosRubrica || {};
+          
+          const codRubr = dadosRubrica.codRubr || info['@_id'] || '';
+          const dscRubr = dadosRubrica.dscRubr || '';
+          const natRubr = String(dadosRubrica.natRubr || '');
+          const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
+
+          if (codRubr) {
+            rubricasMap.set(codRubr, {
+              descricao: dscRubr,
+              natureza: natRubr,
+              verbaIndenizatoria: verbaIndenizatoria
+            });
+          }
+        }
+      } catch (err) {
+        // Ignora falhas de parse de arquivos individuais
+      }
+    });
+
+    log(`Mapeamento S-1010 finalizado: ${rubricasMap.size} rubricas catalogadas.`);
+
+    // PASSO 2: Extrair movimentações da folha (S-1200 / S-1210 / S-1202 / etc.)
+    let processedCount = 0;
+
+    for (let file of xmlFiles) {
+      processedCount++;
+      const percent = Math.round((processedCount / xmlFiles.length) * 100);
+      progressFill.style.width = `${percent}%`;
+      statusPercent.innerText = `${percent}%`;
+      statusLabel.innerText = `Lendo XML ${processedCount} de ${xmlFiles.length}...`;
+
+      try {
+        const parsed = fxParser.parse(file.content);
+        const esocial = parsed.eSocial || {};
+
+        // Processa S-1200 (Remuneração de Trabalhador) ou S-1210 (Pagamentos)
+        const evtRemun = esocial.evtRemunPkey || esocial.evtRemun || esocial.evtPgtos;
+        
+        if (evtRemun) {
+          const ideEmpregador = evtRemun.ideEmpregador || {};
+          const ideTrabalhador = evtRemun.ideTrabalhador || {};
+          const cnpj = ideEmpregador.nrInsc || '';
+          const cpf = ideTrabalhador.cpfTrab || '';
+          const perApur = evtRemun.ideEvento ? evtRemun.ideEvento.perApur : '';
+
+          // Navega pelas seções de itens de remuneração
+          let itens = [];
+          const dmDev = evtRemun.dmDev || evtRemun.infoPgto || [];
+          const listDmDev = Array.isArray(dmDev) ? dmDev : [dmDev];
+
+          listDmDev.forEach(dm => {
+            const codCateg = dm.codCateg || '';
+            const infoPerApur = dm.infoPerApur || dm.infoPerAnt || {};
+            const ideEstab = infoPerApur.ideEstab || dm.ideEstab || [];
+            const listEstab = Array.isArray(ideEstab) ? ideEstab : [ideEstab];
+
+            listEstab.forEach(est => {
+              const itensRemun = est.itensRemun || est.detPgto || [];
+              const listItens = Array.isArray(itensRemun) ? itensRemun : [itensRemun];
+
+              listItens.forEach(it => {
+                const codRubr = it.codRubr || it.tpPgto || '';
+                const vrRubr = it.vrRubr || it.vrPgto || 0;
+                
+                // Busca o cruzamento na tabela de rubricas
+                const infoRubrica = rubricasMap.get(codRubr) || {
+                  descricao: "Desconhecida (Sem S-1010)",
+                  natureza: "N/A",
+                  verbaIndenizatoria: DE_PARA_VERBAS[it.natRubr] || "Verba Remuneratória / Outros"
+                };
+
+                linhasPlanilha.push({
+                  Arquivo: file.name,
+                  CNPJEmpregador: cnpj,
+                  CPFTrabalhador: cpf,
+                  PeriodoApuracao: perApur,
+                  CodigoRubrica: codRubr,
+                  NomeRubrica: infoRubrica.descricao,
+                  CodigoNatureza: infoRubrica.natureza,
+                  VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
+                  ValorRubrica: parseFloat(vrRubr) || 0
+                });
+              });
+            });
+          });
+        }
+      } catch (err) {
+        // Ignora erros específicos do XML
+      }
+    }
+
+    log(`Extração concluída: ${linhasPlanilha.length} linhas de movimentação geradas.`);
+    log("Montando arquivo Excel (.xlsx)...");
+
+    // PASSO 3: Gerar arquivo Excel (.xlsx) usando ExcelJS
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Folha & Rubricas Cruzadas');
+
+    worksheet.columns = [
+      { header: 'Arquivo XML', key: 'Arquivo', width: 25 },
+      { header: 'CNPJ Empregador', key: 'CNPJEmpregador', width: 18 },
+      { header: 'CPF Trabalhador', key: 'CPFTrabalhador', width: 16 },
+      { header: 'Período Apuração', key: 'PeriodoApuracao', width: 15 },
+      { header: 'Cód. Rubrica', key: 'CodigoRubrica', width: 15 },
+      { header: 'Nome da Rubrica', key: 'NomeRubrica', width: 30 },
+      { header: 'Cód. Natureza', key: 'CodigoNatureza', width: 15 },
+      { header: 'Verba Indenizatória (Cruzamento)', key: 'VerbaIndenizatoria', width: 35 },
+      { header: 'Valor (R$)', key: 'ValorRubrica', width: 16, style: { numFmt: '"R$"#,##0.00' } }
+    ];
+
+    // Estilizar o cabeçalho
+    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
+    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E3A8A' } };
+
+    linhasPlanilha.forEach(linha => worksheet.addRow(linha));
+
+    // Exporta o arquivo para o navegador
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Resultado_XMLs_Rubricas_eSocial_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.click();
+
+    log("Planilha baixada com sucesso!");
+    statusLabel.innerText = "Concluído!";
+    startBtn.disabled = false;
+  });
+</script>
+</body>
+</html>
+"""
+
+os.makedirs("output", exist_ok=True)
+with open("output/index.html", "w", encoding="utf-8") as f:
+    f.write(html_code)
+
+print("HTML gerado com sucesso!")
