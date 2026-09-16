@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Processador de XMLs eSocial - Alta Performance</title>
+  <title>Processador de Lote ZIP eSocial - Alta Performance</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fast-xml-parser@4.2.5/lib/fxp.min.js"></script>
   <style>
     :root {
       --bg-color: #f8fafc;
@@ -55,13 +54,13 @@
 <div class="container">
   <header>
     <h1>Leitor de Lote ZIP eSocial (Folha & Rubricas)</h1>
-    <p class="subtitle">Processador de alta performance para grandes volumes de arquivos dentro do ZIP.</p>
+    <p class="subtitle">Processador de alta performance otimizado para grandes volumes de arquivos dentro do ZIP.</p>
   </header>
 
   <div class="card">
     <div class="dropzone" id="dropzone">
       <strong style="color: var(--primary);">Selecione ou arraste seu arquivo .ZIP aqui</strong>
-      <p>Otimizado para pacotes com mais de 50.000 arquivos eSocial</p>
+      <p>Otimizado para pacotes grandes (+60.000 arquivos eSocial)</p>
       <input type="file" id="fileInput" accept=".zip,.ZIP" style="display:none;">
     </div>
 
@@ -136,19 +135,19 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  function findNodesByTag(obj, targetTag) {
-    let results = [];
-    if (!obj || typeof obj !== 'object') return results;
+  function getTagValue(element, tagName) {
+    if (!element) return '';
+    const el = element.getElementsByTagName(tagName)[0] || element.getElementsByTagNameNS('*', tagName)[0];
+    return el ? el.textContent.trim() : '';
+  }
 
-    for (let key in obj) {
-      const cleanKey = key.replace(/^.*:/, ''); 
-      if (cleanKey.toLowerCase() === targetTag.toLowerCase()) {
-        results.push(obj[key]);
-      } else if (typeof obj[key] === 'object') {
-        results = results.concat(findNodesByTag(obj[key], targetTag));
-      }
+  function getTagElements(element, tagName) {
+    if (!element) return [];
+    let list = Array.from(element.getElementsByTagName(tagName));
+    if (list.length === 0) {
+      list = Array.from(element.getElementsByTagNameNS('*', tagName));
     }
-    return results;
+    return list;
   }
 
   startBtn.addEventListener('click', async () => {
@@ -162,47 +161,40 @@
       const allEntries = Object.keys(zip.files).filter(fileName => !zip.files[fileName].dir);
       const totalFiles = allEntries.length;
 
-      log(`Total de arquivos encontrados dentro do ZIP: ${totalFiles.toLocaleString('pt-BR')}`);
+      log(`Total de arquivos identificados no ZIP: ${totalFiles.toLocaleString('pt-BR')}`);
 
       if (totalFiles === 0) {
-        log("Nenhum arquivo encontrado dentro do ZIP.", '#f87171');
+        log("Nenhum arquivo encontrado dentro do pacote ZIP.", '#f87171');
         startBtn.disabled = false;
         return;
       }
 
-      const fxParser = new fxp.XMLParser({ 
-        ignoreAttributes: false, 
-        attributeNamePrefix: "@_",
-        removeNSPrefix: true 
-      });
-
+      const parser = new DOMParser();
       const rubricasMap = new Map();
       const linhasPlanilha = [];
 
-      // Passagem 1: Mapear Rubricas S-1010
-      log("Passo 1/2: Mapeando Tabela de Rubricas (S-1010)...");
+      // PASSO 1: Mapear Rubricas S-1010
+      log("Passo 1/2: Catalogando Tabela de Rubricas (S-1010)...");
       let countPass1 = 0;
 
       for (let fileName of allEntries) {
         countPass1++;
-        if (fileName.toLowerCase().includes('1010') || fileName.toLowerCase().endsWith('.xml')) {
+
+        if (fileName.includes('1010') || fileName.toLowerCase().endsWith('.xml') || fileName.includes('.S-')) {
           try {
             const xmlText = await zip.files[fileName].async('string');
+
             if (xmlText.includes('evtTabRubrica')) {
-              const parsed = fxParser.parse(xmlText);
-              const nodesS1010 = findNodesByTag(parsed, 'evtTabRubrica');
+              const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+              const evts = getTagElements(xmlDoc, 'evtTabRubrica');
 
-              nodesS1010.forEach(evt => {
-                const infoRubrica = evt.infoRubrica || {};
-                const dados = infoRubrica.inclusao || infoRubrica.alteracao || {};
-                const dadosRubrica = dados.dadosRubrica || {};
-
-                const codRubr = dadosRubrica.codRubr || '';
-                const dscRubr = dadosRubrica.dscRubr || '';
-                const natRubr = String(dadosRubrica.natRubr || '');
-                const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
+              evts.forEach(evt => {
+                const codRubr = getTagValue(evt, 'codRubr');
+                const dscRubr = getTagValue(evt, 'dscRubr');
+                const natRubr = getTagValue(evt, 'natRubr');
 
                 if (codRubr) {
+                  const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
                   rubricasMap.set(codRubr, {
                     descricao: dscRubr,
                     natureza: natRubr,
@@ -214,106 +206,93 @@
           } catch (e) {}
         }
 
-        if (countPass1 % 1000 === 0) {
-          const pct = Math.round((countPass1 / totalFiles) * 50);
+        if (countPass1 % 2000 === 0 || countPass1 === totalFiles) {
+          const pct = Math.round((countPass1 / totalFiles) * 40);
           progressFill.style.width = `${pct}%`;
           statusPercent.innerText = `${pct}%`;
-          statusLabel.innerText = `Varrendo rubricas: ${countPass1.toLocaleString()} / ${totalFiles.toLocaleString()}`;
+          statusLabel.innerText = `Varrendo rubricas S-1010: ${countPass1.toLocaleString('pt-BR')} / ${totalFiles.toLocaleString('pt-BR')}`;
           await new Promise(r => setTimeout(r, 0));
         }
       }
 
-      log(`Passo 1 Concluído: ${rubricasMap.size} rubricas identificadas.`);
+      log(`Passo 1 Concluído: ${rubricasMap.size.toLocaleString('pt-BR')} rubricas registradas.`);
 
-      // Passagem 2: Processar eventos de Folha em Streaming/Lotes
-      log("Passo 2/2: Lendo eventos de folha de pagamento (S-1200, S-1210, etc.)...");
+      // PASSO 2: Processar eventos de Folha (S-1200, S-1210, S-2299, etc.)
+      log("Passo 2/2: Lendo dados das folhas de pagamento e pagamentos...");
       let countPass2 = 0;
 
       for (let fileName of allEntries) {
         countPass2++;
 
-        // Filtra para ler apenas arquivos com potencial de ter informações financeiras
-        if (!fileName.toLowerCase().includes('1010')) {
-          try {
-            const xmlText = await zip.files[fileName].async('string');
+        try {
+          const xmlText = await zip.files[fileName].async('string');
 
-            if (xmlText.includes('evtRemun') || xmlText.includes('evtPgtos') || xmlText.includes('evtRscResc')) {
-              const parsed = fxParser.parse(xmlText);
+          if (xmlText.includes('evtRemun') || xmlText.includes('evtPgtos') || xmlText.includes('evtRscResc')) {
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
 
-              const evtsRemun = [
-                ...findNodesByTag(parsed, 'evtRemun'),
-                ...findNodesByTag(parsed, 'evtPgtos'),
-                ...findNodesByTag(parsed, 'evtRscResc')
+            const evtsRemun = [
+              ...getTagElements(xmlDoc, 'evtRemun'),
+              ...getTagElements(xmlDoc, 'evtPgtos'),
+              ...getTagElements(xmlDoc, 'evtRscResc')
+            ];
+
+            evtsRemun.forEach(evt => {
+              const cnpj = getTagValue(evt, 'nrInsc');
+              const cpf = getTagValue(evt, 'cpfTrab');
+              const perApur = getTagValue(evt, 'perApur');
+
+              const itensRemun = [
+                ...getTagElements(evt, 'itensRemun'),
+                ...getTagElements(evt, 'detPgto')
               ];
 
-              evtsRemun.forEach(evt => {
-                const ideEmpregador = evt.ideEmpregador || {};
-                const ideTrabalhador = evt.ideTrabalhador || {};
-                const cnpj = ideEmpregador.nrInsc || '';
-                const cpf = ideTrabalhador.cpfTrab || '';
-                const perApur = evt.ideEvento ? evt.ideEvento.perApur : '';
+              itensRemun.forEach(item => {
+                const codRubr = getTagValue(item, 'codRubr') || getTagValue(item, 'tpPgto');
+                const vrRubr = getTagValue(item, 'vrRubr') || getTagValue(item, 'vrPgto') || '0';
+                const natRubrXml = getTagValue(item, 'natRubr');
 
-                const dmDevs = findNodesByTag(evt, 'dmDev');
-                const infoPgtos = findNodesByTag(evt, 'infoPgto');
-                const subNodes = [...dmDevs, ...infoPgtos];
+                if (codRubr || vrRubr !== '0') {
+                  const infoRubrica = rubricasMap.get(codRubr) || {
+                    descricao: "Não cadastrada no S-1010",
+                    natureza: natRubrXml || "N/A",
+                    verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
+                  };
 
-                subNodes.forEach(sub => {
-                  const itensRemun = findNodesByTag(sub, 'itensRemun');
-                  const detPgtos = findNodesByTag(sub, 'detPgto');
-                  const todosItens = [...itensRemun, ...detPgtos];
-
-                  todosItens.forEach(it => {
-                    const listItens = Array.isArray(it) ? it : [it];
-                    listItens.forEach(item => {
-                      const codRubr = item.codRubr || item.tpPgto || '';
-                      const vrRubr = item.vrRubr || item.vrPgto || 0;
-                      const natRubrXml = String(item.natRubr || '');
-
-                      if (codRubr || vrRubr) {
-                        const infoRubrica = rubricasMap.get(codRubr) || {
-                          descricao: "Não cadastrada no S-1010",
-                          natureza: natRubrXml || "N/A",
-                          verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
-                        };
-
-                        linhasPlanilha.push({
-                          Arquivo: fileName,
-                          CNPJEmpregador: cnpj,
-                          CPFTrabalhador: cpf,
-                          PeriodoApuracao: perApur,
-                          CodigoRubrica: codRubr,
-                          NomeRubrica: infoRubrica.descricao,
-                          CodigoNatureza: infoRubrica.natureza,
-                          VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
-                          ValorRubrica: parseFloat(vrRubr) || 0
-                        });
-                      }
-                    });
+                  linhasPlanilha.push({
+                    Arquivo: fileName,
+                    CNPJEmpregador: cnpj,
+                    CPFTrabalhador: cpf,
+                    PeriodoApuracao: perApur,
+                    CodigoRubrica: codRubr,
+                    NomeRubrica: infoRubrica.descricao,
+                    CodigoNatureza: infoRubrica.natureza,
+                    VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
+                    ValorRubrica: parseFloat(vrRubr.replace(',', '.')) || 0
                   });
-                });
+                }
               });
-            }
-          } catch (errItem) {}
-        }
+            });
+          }
+        } catch (errItem) {}
 
-        if (countPass2 % 500 === 0 || countPass2 === totalFiles) {
-          const pct = 50 + Math.round((countPass2 / totalFiles) * 50);
+        if (countPass2 % 1000 === 0 || countPass2 === totalFiles) {
+          const pct = 40 + Math.round((countPass2 / totalFiles) * 60);
           progressFill.style.width = `${pct}%`;
           statusPercent.innerText = `${pct}%`;
-          statusLabel.innerText = `Lendo arquivos: ${countPass2.toLocaleString()} de ${totalFiles.toLocaleString()}`;
+          statusLabel.innerText = `Processando arquivos: ${countPass2.toLocaleString('pt-BR')} / ${totalFiles.toLocaleString('pt-BR')}`;
           await new Promise(r => setTimeout(r, 0));
         }
       }
 
-      log(`Total de registros extraídos da folha: ${linhasPlanilha.length.toLocaleString('pt-BR')}`);
+      log(`Processamento concluído! Total de registros financeiros extraídos: ${linhasPlanilha.length.toLocaleString('pt-BR')}`);
 
-      // Gerar Excel com otimização de memória
-      log("Exportando para Excel (.xlsx)...");
+      // PASSO 3: Exportar para Excel (.xlsx)
+      log("Gerando e formatando planilha Excel (.xlsx)...");
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Folha & Rubricas');
 
       worksheet.columns = [
-        { header: 'Arquivo', key: 'Arquivo', width: 30 },
+        { header: 'Arquivo', key: 'Arquivo', width: 35 },
         { header: 'CNPJ Empregador', key: 'CNPJEmpregador', width: 18 },
         { header: 'CPF Trabalhador', key: 'CPFTrabalhador', width: 16 },
         { header: 'Período Apuração', key: 'PeriodoApuracao', width: 15 },
@@ -334,15 +313,15 @@
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Resultado_eSocial_Lote_Grande.xlsx`;
+      a.download = `Resultado_eSocial_Lote_${zipFile.name.replace('.zip', '')}.xlsx`;
       a.click();
 
-      log("Planilha de alta escala gerada com sucesso!", '#4ade80');
-      statusLabel.innerText = "Concluído!";
+      log("Planilha baixada com sucesso!", '#4ade80');
+      statusLabel.innerText = "Concluído com Sucesso!";
       startBtn.disabled = false;
 
     } catch (globalErr) {
-      log(`Erro durante o processamento do ZIP: ${globalErr.message}`, '#f87171');
+      log(`Erro no processamento: ${globalErr.message}`, '#f87171');
       startBtn.disabled = false;
     }
   });
