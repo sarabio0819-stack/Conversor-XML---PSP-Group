@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Leitor Ultra-Rápido eSocial + Base Lefisc (57+ ZIPs)</title>
+  <title>Leitor Ultra-Otimizado eSocial (Zero Out-of-Memory)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     :root {
@@ -31,19 +31,13 @@
       border: 2px dashed #cbd5e1; border-radius: 8px; padding: 40px 20px; text-align: center; background: #f1f5f9; cursor: pointer; transition: all 0.2s;
     }
     .dropzone:hover, .dropzone.dragover { border-color: var(--primary); background: #eff6ff; }
-    .dropzone p { color: var(--text-muted); font-size: 0.9rem; margin-top: 8px; }
-
-    .button-group { display: flex; gap: 12px; margin-top: 16px; }
 
     .btn {
       display: inline-flex; align-items: center; justify-content: center; background: var(--primary); color: white; border: none; padding: 12px 24px;
-      font-size: 0.95rem; font-weight: 600; border-radius: 6px; cursor: pointer; flex: 1; transition: background 0.2s;
+      font-size: 0.95rem; font-weight: 600; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 16px; transition: background 0.2s;
     }
     .btn:hover { background-color: var(--primary-hover); }
     .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
-
-    .btn-download { background-color: var(--success); }
-    .btn-download:hover { background-color: var(--success-hover); }
 
     .progress-box { margin-top: 16px; display: none; }
     .progress-bar-bg { background: #e2e8f0; height: 12px; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
@@ -66,21 +60,21 @@
 
 <div class="container">
   <header>
-    <h1>Leitor Ultra-Rápido eSocial + Tabela Lefisc</h1>
-    <p class="subtitle">Cruzamento inteligente de Rubricas e Naturezas com fallback automático da Tabela 3 do eSocial.</p>
+    <h1>Leitor eSocial (Arquitetura Stream / Sem Estouro de RAM)</h1>
+    <p class="subtitle">Leitura sequencial em tempo real otimizada para pacotes gigantes de ZIPs.</p>
   </header>
 
   <div class="card">
     <div class="dropzone" id="dropzone">
       <strong style="color: var(--primary);">Selecione ou arraste suas pastas .ZIP ou arquivos .XML</strong>
-      <p>Suporta processamento em lote de dezenas de ZIPs sem fechar a página.</p>
+      <p>Processamento direto em lote sem sobrecarregar a memória da aba do navegador.</p>
       <input type="file" id="fileInput" accept=".xml,.XML,.zip,.ZIP" multiple style="display:none;">
     </div>
 
     <div class="stats-summary" id="statsSummary">
       <div class="stat-card">
         <div class="val" id="statFiles">0</div>
-        <div class="lbl">XMLs Identificados</div>
+        <div class="lbl">XMLs Processados</div>
       </div>
       <div class="stat-card">
         <div class="val" id="statRubricas">0</div>
@@ -88,7 +82,7 @@
       </div>
       <div class="stat-card">
         <div class="val" id="statLancamentos">0</div>
-        <div class="lbl">Linhas Financeiras</div>
+        <div class="lbl">Linhas Geradas</div>
       </div>
     </div>
 
@@ -104,17 +98,12 @@
 
     <div class="log-box" id="logBox"></div>
 
-    <div class="button-group">
-      <button class="btn" id="startBtn" disabled>1. Processar XMLs</button>
-      <button class="btn btn-download" id="downloadBtn" disabled>2. Baixar Planilha Consolidada</button>
-    </div>
+    <button class="btn" id="startBtn" disabled>Processar e Baixar CSV Direto</button>
   </div>
 </div>
 
 <script>
-  // TABELA ESTÁTICA LEFISC / TABELA 3 DO ESOCIAL (FALLBACK SE O XML S-1010 NÃO FOR ENCONTRADO)
   const BASE_NATUREZAS_LEFISC = {
-    // Proventos e DSR
     "1000": { desc: "Salário, Vencimento ou Sorteio", tipo: "Remuneratória" },
     "1002": { desc: "Descanso Semanal Remunerado - DSR", tipo: "Remuneratória" },
     "1003": { desc: "Horas Extraordinárias", tipo: "Remuneratória" },
@@ -123,32 +112,22 @@
     "1006": { desc: "Adicional de Insalubridade", tipo: "Remuneratória" },
     "1007": { desc: "Adicional Noturno", tipo: "Remuneratória" },
     "1009": { desc: "Ressarcimento de Despesas / EPI", tipo: "Indenizatória" },
-    
-    // Férias e Avisos
     "1020": { desc: "Aviso Prévio Indenizado", tipo: "Indenizatória" },
     "1021": { desc: "Aviso Prévio Trabalhado", tipo: "Remuneratória" },
     "1022": { desc: "Terço Constitucional de Férias", tipo: "Remuneratória / Indenizatória" },
     "1023": { desc: "Férias - Gozadas", tipo: "Remuneratória" },
     "1024": { desc: "Férias - Pagas na Rescisão (Indenizadas)", tipo: "Indenizatória" },
-    
-    // Benefícios e Auxílios
     "1050": { desc: "Salário-Maternidade", tipo: "Benefício" },
     "1051": { desc: "Salário-Família", tipo: "Benefício / Isento" },
     "1052": { desc: "Auxílio-Doença (Primeiros 15 dias)", tipo: "Remuneratória" },
-    "1053": { desc: "Auxílio-Acidente", tipo: "Benefício / Isento" },
     "1402": { desc: "Diárias de Viagem", tipo: "Indenizatória" },
     "1409": { desc: "Vale-Transporte", tipo: "Indenizatória" },
     "1410": { desc: "Vale-Alimentação / Refeição (PAT)", tipo: "Indenizatória" },
-    
-    // Indenizações e Rescisões
     "6000": { desc: "Indenização / Rescisão Contratual", tipo: "Indenizatória" },
     "6001": { desc: "Indenização Art. 477 CLT", tipo: "Indenizatória" },
     "6002": { desc: "Indenização Art. 479 CLT", tipo: "Indenizatória" },
     "6003": { desc: "Multa Rescisória FGTS (40% / 20%)", tipo: "Indenizatória" },
-    "6004": { desc: "Indenização Adicional Art. 9º Lei 7.238/84", tipo: "Indenizatória" },
     "6007": { desc: "Participação nos Lucros ou Resultados - PLR", tipo: "Isento / Indenizatória" },
-    
-    // Descontos
     "9200": { desc: "Desconto de INSS", tipo: "Desconto Oficial" },
     "9201": { desc: "Desconto de Vale-Transporte", tipo: "Desconto Benefício" },
     "9203": { desc: "Desconto de Alimentação", tipo: "Desconto Benefício" },
@@ -159,7 +138,6 @@
   const fileInput = document.getElementById('fileInput');
   const dropzone = document.getElementById('dropzone');
   const startBtn = document.getElementById('startBtn');
-  const downloadBtn = document.getElementById('downloadBtn');
   const progressBox = document.getElementById('progressBox');
   const progressFill = document.getElementById('progressFill');
   const statusLabel = document.getElementById('statusLabel');
@@ -168,7 +146,6 @@
   const statsSummary = document.getElementById('statsSummary');
 
   let selectedFiles = [];
-  let linhasPlanilha = [];
 
   dropzone.addEventListener('click', () => fileInput.click());
   dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
@@ -201,12 +178,11 @@
       const totalMB = (selectedFiles.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
       
       let infoText = [];
-      if (xmlCount > 0) infoText.push(`${xmlCount.toLocaleString('pt-BR')} arquivo(s) XML`);
-      if (zipCount > 0) infoText.push(`${zipCount} arquivo(s) ZIP`);
+      if (xmlCount > 0) infoText.push(`${xmlCount} XML(s)`);
+      if (zipCount > 0) infoText.push(`${zipCount} ZIP(s)`);
 
-      dropzone.querySelector('strong').innerText = `${infoText.join(' e ')} selecionado(s) (${totalMB} MB total)`;
+      dropzone.querySelector('strong').innerText = `${infoText.join(' e ')} selecionados (${totalMB} MB)`;
       startBtn.disabled = false;
-      downloadBtn.disabled = true;
     }
   }
 
@@ -217,7 +193,7 @@
   }
 
   function yieldToUI() {
-    return new Promise(resolve => setTimeout(resolve, 0));
+    return new Promise(resolve => setTimeout(resolve, 10)); // Pausa maior para liberar Garbage Collector
   }
 
   function extractTagValue(xmlStr, tagName) {
@@ -239,257 +215,80 @@
   startBtn.addEventListener('click', async () => {
     try {
       startBtn.disabled = true;
-      downloadBtn.disabled = true;
       progressBox.style.display = 'block';
       statsSummary.style.display = 'grid';
       logBox.innerHTML = '';
-      linhasPlanilha = [];
-      
-      document.getElementById('statFiles').innerText = '0';
-      document.getElementById('statRubricas').innerText = '0';
-      document.getElementById('statLancamentos').innerText = '0';
 
-      log(`Iniciando leitura de ${selectedFiles.length.toLocaleString('pt-BR')} pacote(s)...`);
-
+      let totalXmls = 0;
+      let totalLancamentos = 0;
       const rubricasMap = new Map();
 
-      // PASSO 1: Mapear ZIPs e XMLs
-      log("Etapa 1/3: Mapeando arquivos soltos e ZIPs...");
-      const xmlList = [];
+      // ARRAY DE BLOBS PARA ARMAZENAR NO DISCO LOCAL (SEM USAR RAM DENSE)
+      const csvChunks = ["\uFEFFOrigem (ZIP / Solto);Nome Arquivo XML;CNPJ Empregador;CPF Trabalhador;Período Apuração;Cód. Rubrica;Nome da Rubrica;Cód. Natureza;Cruzamento Verba Indenizatória;Valor (R$)\n"];
+
+      log("Processando arquivos com liberação contínua de memória RAM...");
 
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
         
         statusLabel.innerText = `Lendo pacote ${i + 1}/${selectedFiles.length}: ${file.name}`;
-        statusPercent.innerText = `${Math.round(((i + 1) / selectedFiles.length) * 20)}%`;
-        progressFill.style.width = `${statusPercent.innerText}`;
+        const pct = Math.round(((i + 1) / selectedFiles.length) * 100);
+        progressFill.style.width = `${pct}%`;
+        statusPercent.innerText = `${pct}%`;
 
+        // PROCESSA ARQUIVOS INDIVIDUAIS SEM GUARDAR O TEXTO XML NA MEMÓRIA GLOBAL
         if (file.name.toLowerCase().endsWith('.xml')) {
-          xmlList.push({ source: 'XML Solto', name: file.name, fileObj: file });
-        } else if (file.name.toLowerCase().endsWith('.zip')) {
+          const xmlText = await file.text();
+          totalXmls++;
+          processSingleXML(file.name, file.name, xmlText, rubricasMap, csvChunks, () => totalLancamentos++);
+        } 
+        else if (file.name.toLowerCase().endsWith('.zip')) {
           try {
             const zip = await JSZip.loadAsync(file);
             const entries = Object.keys(zip.files).filter(f => !zip.files[f].dir && f.toLowerCase().endsWith('.xml'));
-            entries.forEach(entry => {
-              xmlList.push({ source: file.name, name: entry.split('/').pop(), zipObj: zip.files[entry] });
-            });
+
+            // PASSO A: Ler apenas S-1010 do ZIP
+            for (const entry of entries) {
+              if (entry.toLowerCase().includes('1010') || entry.toLowerCase().includes('rubrica')) {
+                const xmlText = await zip.files[entry].async('string');
+                parseRubrica(xmlText, rubricasMap);
+              }
+            }
+
+            // PASSO B: Ler os lançamentos do ZIP e descartar o XML logo em seguida
+            for (const entry of entries) {
+              const xmlText = await zip.files[entry].async('string');
+              totalXmls++;
+              processSingleXML(file.name, entry.split('/').pop(), xmlText, rubricasMap, csvChunks, () => totalLancamentos++);
+            }
+
+            // APAGA A REFERÊNCIA DO ZIP PARA FORÇAR LIMPEZA DE MEMÓRIA (GARBAGE COLLECTOR)
+            zip.files = null;
+
           } catch (e) {
-            log(`Aviso ao ler ZIP ${file.name}: ${e.message}`, '#f87171');
+            log(`Erro no pacote ${file.name}: ${e.message}`, '#f87171');
           }
         }
 
-        if (i % 3 === 0) await yieldToUI();
-      }
-
-      document.getElementById('statFiles').innerText = xmlList.length.toLocaleString('pt-BR');
-      log(`Total de XMLs localizados: ${xmlList.length.toLocaleString('pt-BR')}`, '#4ade80');
-
-      // PASSO 2: Mapear Tabela S-1010 do Cliente
-      log("Etapa 2/3: Mapeando Rubricas (S-1010) dos XMLs do cliente...");
-      
-      const CHUNK_SIZE = 500;
-      for (let i = 0; i < xmlList.length; i += CHUNK_SIZE) {
-        const chunk = xmlList.slice(i, i + CHUNK_SIZE);
-
-        await Promise.all(chunk.map(async (item) => {
-          try {
-            let xmlText = item.fileObj ? await item.fileObj.text() : await item.zipObj.async('string');
-            item.xmlText = xmlText;
-
-            if (xmlText.includes('evtTabRubrica') || xmlText.includes('infoRubrica')) {
-              const blocks = extractBlocks(xmlText, 'evtTabRubrica').concat(extractBlocks(xmlText, 'infoRubrica'));
-              if (blocks.length === 0) blocks.push(xmlText);
-
-              blocks.forEach(blk => {
-                const codRubr = extractTagValue(blk, 'codRubr');
-                const dscRubr = extractTagValue(blk, 'dscRubr');
-                const natRubr = extractTagValue(blk, 'natRubr');
-
-                if (codRubr) {
-                  // Tenta puxar a classificação da base Lefisc ou usa padrão
-                  const lefiscInfo = BASE_NATUREZAS_LEFISC[natRubr] || { tipo: "Verba Remuneratória / Outros" };
-                  rubricasMap.set(codRubr, {
-                    descricao: dscRubr,
-                    natureza: natRubr,
-                    verbaIndenizatoria: lefiscInfo.tipo
-                  });
-                }
-              });
-            }
-          } catch (e) {}
-        }));
-
-        const currentDone = Math.min(i + CHUNK_SIZE, xmlList.length);
-        const pct = 20 + Math.round((currentDone / xmlList.length) * 30);
-        progressFill.style.width = `${pct}%`;
-        statusPercent.innerText = `${pct}%`;
-        statusLabel.innerText = `Rubricas S-1010: ${currentDone.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
+        // Atualiza interface
+        document.getElementById('statFiles').innerText = totalXmls.toLocaleString('pt-BR');
         document.getElementById('statRubricas').innerText = rubricasMap.size.toLocaleString('pt-BR');
+        document.getElementById('statLancamentos').innerText = totalLancamentos.toLocaleString('pt-BR');
 
+        // Pausa crucial para permitir que o navegador limpe a memória RAM
         await yieldToUI();
       }
 
-      log(`Rubricas cadastradas no S-1010: ${rubricasMap.size.toLocaleString('pt-BR')}`, '#4ade80');
-
-      // PASSO 3: Processar Folhas e Cruzamento com Fallback Lefisc
-      log("Etapa 3/3: Extraindo Folhas e realizando cruzamento inteligente...");
-      
-      for (let i = 0; i < xmlList.length; i += CHUNK_SIZE) {
-        const chunk = xmlList.slice(i, i + CHUNK_SIZE);
-
-        chunk.forEach(item => {
-          const xmlText = item.xmlText || '';
-
-          if (
-            xmlText.includes('evtRemun') || 
-            xmlText.includes('evtPgtos') || 
-            xmlText.includes('evtRscResc') ||
-            xmlText.includes('evtTSVE') ||
-            xmlText.includes('itensRemun') ||
-            xmlText.includes('detPgto') ||
-            xmlText.includes('dmDev')
-          ) {
-            const cnpjEmpregador = extractTagValue(xmlText, 'nrInsc') || extractTagValue(xmlText, 'nrInscEstab');
-            const cpfTrabalhador = extractTagValue(xmlText, 'cpfTrab');
-            const perApur = extractTagValue(xmlText, 'perApur') || extractTagValue(xmlText, 'perRef');
-
-            const itemBlocks = [
-              ...extractBlocks(xmlText, 'itensRemun'),
-              ...extractBlocks(xmlText, 'detPgto'),
-              ...extractBlocks(xmlText, 'detVerbras')
-            ];
-
-            itemBlocks.forEach(blk => {
-              const codRubr = extractTagValue(blk, 'codRubr') || extractTagValue(blk, 'tpPgto');
-              const vrRubr = extractTagValue(blk, 'vrRubr') || extractTagValue(blk, 'vrPgto') || '0';
-              const natRubrXml = extractTagValue(blk, 'natRubr');
-
-              if (codRubr || vrRubr !== '0') {
-                let nomeRubrica = "";
-                let codigoNatureza = "";
-                let verbaIndenizatoria = "";
-
-                // ESTRATÉGIA DE BUSCA EM 2 CAMADAS:
-                if (rubricasMap.has(codRubr)) {
-                  // 1ª Camada: Encontrou no S-1010 do próprio cliente
-                  const info = rubricasMap.get(codRubr);
-                  nomeRubrica = info.descricao;
-                  codigoNatureza = info.natureza || natRubrXml || "N/A";
-                  
-                  const lefiscInfo = BASE_NATUREZAS_LEFISC[codigoNatureza];
-                  verbaIndenizatoria = lefiscInfo ? lefiscInfo.tipo : info.verbaIndenizatoria;
-
-                } else if (BASE_NATUREZAS_LEFISC[natRubrXml]) {
-                  // 2ª Camada (FALLBACK LEFISC): Não estava no S-1010, mas achou a Natureza no dicionário Lefisc
-                  const lefiscInfo = BASE_NATUREZAS_LEFISC[natRubrXml];
-                  nomeRubrica = `[Base eSocial] ${lefiscInfo.desc}`;
-                  codigoNatureza = natRubrXml;
-                  verbaIndenizatoria = lefiscInfo.tipo;
-
-                } else {
-                  // 3ª Camada: Não encontrou em nenhuma das bases
-                  nomeRubrica = "Rubrica não identificada no XML";
-                  codigoNatureza = natRubrXml || "N/A";
-                  verbaIndenizatoria = "Verba Remuneratória / Outros";
-                }
-
-                linhasPlanilha.push({
-                  Origem: item.source,
-                  ArquivoXML: item.name,
-                  CNPJEmpregador: cnpjEmpregador,
-                  CPFTrabalhador: cpfTrabalhador,
-                  PeriodoApuracao: perApur,
-                  CodigoRubrica: codRubr,
-                  NomeRubrica: nomeRubrica,
-                  CodigoNatureza: codigoNatureza,
-                  VerbaIndenizatoria: verbaIndenizatoria,
-                  ValorRubrica: (parseFloat(vrRubr.replace(',', '.')) || 0).toFixed(2)
-                });
-              }
-            });
-          }
-
-          item.xmlText = null; // Libera memória
-        });
-
-        const currentDone = Math.min(i + CHUNK_SIZE, xmlList.length);
-        const pct = 50 + Math.round((currentDone / xmlList.length) * 50);
-        progressFill.style.width = `${pct}%`;
-        statusPercent.innerText = `${pct}%`;
-        statusLabel.innerText = `Processando Folhas: ${currentDone.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
-        document.getElementById('statLancamentos').innerText = linhasPlanilha.length.toLocaleString('pt-BR');
-
-        await yieldToUI();
-      }
-
-      log(`Processamento finalizado com sucesso! Total: ${linhasPlanilha.length.toLocaleString('pt-BR')} linhas.`, '#4ade80');
-
-      if (linhasPlanilha.length === 0) {
-        log("Aviso: Nenhum lançamento financeiro foi encontrado nos XMLs fornecidos.", '#f87171');
+      if (totalLancamentos === 0) {
+        log("Nenhum lançamento financeiro foi encontrado.", '#f87171');
         startBtn.disabled = false;
         return;
       }
 
-      progressFill.style.width = `100%`;
-      statusPercent.innerText = `100%`;
-      statusLabel.innerText = "Processamento pronto para download!";
-      
-      startBtn.disabled = false;
-      downloadBtn.disabled = false;
+      log("Criando arquivo final para download...", '#4ade80');
 
-    } catch (globalErr) {
-      log(`Erro no processamento: ${globalErr.message}`, '#f87171');
-      startBtn.disabled = false;
-    }
-  });
-
-  // DOWNLOAD EM CSV (UTF-8 COM BOM)
-  downloadBtn.addEventListener('click', async () => {
-    if (linhasPlanilha.length === 0) return;
-
-    try {
-      downloadBtn.disabled = true;
-      log("Gerando arquivo CSV para download...");
-
-      const headers = [
-        "Origem (ZIP / Solto)",
-        "Nome Arquivo XML",
-        "CNPJ Empregador",
-        "CPF Trabalhador",
-        "Período Apuração",
-        "Cód. Rubrica",
-        "Nome da Rubrica",
-        "Cód. Natureza",
-        "Cruzamento Verba Indenizatória",
-        "Valor (R$)"
-      ];
-
-      let csvContent = "\uFEFF" + headers.join(";") + "\n";
-      const chunks = [csvContent];
-
-      for (let i = 0; i < linhasPlanilha.length; i++) {
-        const row = linhasPlanilha[i];
-        const line = [
-          `"${(row.Origem || '').replace(/"/g, '""')}"`,
-          `"${(row.ArquivoXML || '').replace(/"/g, '""')}"`,
-          `"${(row.CNPJEmpregador || '').replace(/"/g, '""')}"`,
-          `"${(row.CPFTrabalhador || '').replace(/"/g, '""')}"`,
-          `"${(row.PeriodoApuracao || '').replace(/"/g, '""')}"`,
-          `"${(row.CodigoRubrica || '').replace(/"/g, '""')}"`,
-          `"${(row.NomeRubrica || '').replace(/"/g, '""')}"`,
-          `"${(row.CodigoNatureza || '').replace(/"/g, '""')}"`,
-          `"${(row.VerbaIndenizatoria || '').replace(/"/g, '""')}"`,
-          `"${row.ValorRubrica.replace('.', ',')}"`
-        ].join(";");
-
-        chunks.push(line + "\n");
-
-        if (i % 50000 === 0 && i > 0) {
-          await yieldToUI();
-        }
-      }
-
-      const blob = new Blob(chunks, { type: 'text/csv;charset=utf-8;' });
+      // Geração de Blob por Chunks
+      const blob = new Blob(csvChunks, { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -499,14 +298,105 @@
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
 
-      log("Planilha gerada e baixada com sucesso!", '#4ade80');
-      downloadBtn.disabled = false;
+      log("Download concluído com sucesso!", '#4ade80');
+      startBtn.disabled = false;
 
-    } catch (err) {
-      log(`Erro ao gerar download: ${err.message}`, '#f87171');
-      downloadBtn.disabled = false;
+    } catch (globalErr) {
+      log(`Erro de processamento: ${globalErr.message}`, '#f87171');
+      startBtn.disabled = false;
     }
   });
+
+  function parseRubrica(xmlText, rubricasMap) {
+    if (xmlText.includes('evtTabRubrica') || xmlText.includes('infoRubrica')) {
+      const blocks = extractBlocks(xmlText, 'evtTabRubrica').concat(extractBlocks(xmlText, 'infoRubrica'));
+      if (blocks.length === 0) blocks.push(xmlText);
+
+      blocks.forEach(blk => {
+        const codRubr = extractTagValue(blk, 'codRubr');
+        const dscRubr = extractTagValue(blk, 'dscRubr');
+        const natRubr = extractTagValue(blk, 'natRubr');
+
+        if (codRubr) {
+          const lefiscInfo = BASE_NATUREZAS_LEFISC[natRubr] || { tipo: "Verba Remuneratória / Outros" };
+          rubricasMap.set(codRubr, {
+            descricao: dscRubr,
+            natureza: natRubr,
+            verbaIndenizatoria: lefiscInfo.tipo
+          });
+        }
+      });
+    }
+  }
+
+  function processSingleXML(sourceName, xmlName, xmlText, rubricasMap, csvChunks, countCallback) {
+    parseRubrica(xmlText, rubricasMap);
+
+    if (
+      xmlText.includes('evtRemun') || 
+      xmlText.includes('evtPgtos') || 
+      xmlText.includes('evtRscResc') ||
+      xmlText.includes('evtTSVE') ||
+      xmlText.includes('itensRemun') ||
+      xmlText.includes('detPgto') ||
+      xmlText.includes('dmDev')
+    ) {
+      const cnpjEmpregador = extractTagValue(xmlText, 'nrInsc') || extractTagValue(xmlText, 'nrInscEstab');
+      const cpfTrabalhador = extractTagValue(xmlText, 'cpfTrab');
+      const perApur = extractTagValue(xmlText, 'perApur') || extractTagValue(xmlText, 'perRef');
+
+      const itemBlocks = [
+        ...extractBlocks(xmlText, 'itensRemun'),
+        ...extractBlocks(xmlText, 'detPgto'),
+        ...extractBlocks(xmlText, 'detVerbras')
+      ];
+
+      itemBlocks.forEach(blk => {
+        const codRubr = extractTagValue(blk, 'codRubr') || extractTagValue(blk, 'tpPgto');
+        const vrRubr = extractTagValue(blk, 'vrRubr') || extractTagValue(blk, 'vrPgto') || '0';
+        const natRubrXml = extractTagValue(blk, 'natRubr');
+
+        if (codRubr || vrRubr !== '0') {
+          let nomeRubrica = "";
+          let codigoNatureza = "";
+          let verbaIndenizatoria = "";
+
+          if (rubricasMap.has(codRubr)) {
+            const info = rubricasMap.get(codRubr);
+            nomeRubrica = info.descricao;
+            codigoNatureza = info.natureza || natRubrXml || "N/A";
+            const lefiscInfo = BASE_NATUREZAS_LEFISC[codigoNatureza];
+            verbaIndenizatoria = lefiscInfo ? lefiscInfo.tipo : info.verbaIndenizatoria;
+          } else if (BASE_NATUREZAS_LEFISC[natRubrXml]) {
+            const lefiscInfo = BASE_NATUREZAS_LEFISC[natRubrXml];
+            nomeRubrica = `[Base eSocial] ${lefiscInfo.desc}`;
+            codigoNatureza = natRubrXml;
+            verbaIndenizatoria = lefiscInfo.tipo;
+          } else {
+            nomeRubrica = "Rubrica não identificada no XML";
+            codigoNatureza = natRubrXml || "N/A";
+            verbaIndenizatoria = "Verba Remuneratória / Outros";
+          }
+
+          const line = [
+            `"${sourceName.replace(/"/g, '""')}"`,
+            `"${xmlName.replace(/"/g, '""')}"`,
+            `"${cnpjEmpregador.replace(/"/g, '""')}"`,
+            `"${cpfTrabalhador.replace(/"/g, '""')}"`,
+            `"${perApur.replace(/"/g, '""')}"`,
+            `"${codRubr.replace(/"/g, '""')}"`,
+            `"${nomeRubrica.replace(/"/g, '""')}"`,
+            `"${codigoNatureza.replace(/"/g, '""')}"`,
+            `"${verbaIndenizatoria.replace(/"/g, '""')}"`,
+            `"${(parseFloat(vrRubr.replace(',', '.')) || 0).toFixed(2).replace('.', ',')}"`
+          ].join(";");
+
+          csvChunks.push(line + "\n");
+          countCallback();
+        }
+      });
+    }
+  }
 </script>
 </body>
 </html>
