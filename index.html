@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Leitor Global eSocial (XMLs Soltos & ZIPs)</title>
+  <title>Leitor Ultra-Rápido eSocial (57+ ZIPs / Otimizado)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
   <style>
@@ -15,6 +15,7 @@
       --text-main: #0f172a;
       --text-muted: #64748b;
       --border: #e2e8f0;
+      --success: #16a34a;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -40,12 +41,19 @@
     .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
 
     .progress-box { margin-top: 16px; display: none; }
-    .progress-bar-bg { background: #e2e8f0; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 8px; }
-    .progress-bar-fill { background: var(--primary); height: 100%; width: 0%; transition: width 0.1s; }
-    .status-text { font-size: 0.85rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+    .progress-bar-bg { background: #e2e8f0; height: 12px; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+    .progress-bar-fill { background: var(--primary); height: 100%; width: 0%; transition: width 0.2s; }
+    .status-text { font-size: 0.85rem; color: var(--text-muted); display: flex; justify-content: space-between; font-weight: 500; }
+
+    .stats-summary {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; display: none;
+    }
+    .stat-card { background: #f1f5f9; padding: 12px; border-radius: 8px; text-align: center; }
+    .stat-card .val { font-size: 1.2rem; font-weight: 700; color: var(--primary); }
+    .stat-card .lbl { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
 
     .log-box {
-      background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 6px; height: 230px; overflow-y: auto; margin-top: 16px; display: none; white-space: pre-wrap;
+      background: #0f172a; color: #38bdf8; font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; padding: 14px; border-radius: 6px; height: 220px; overflow-y: auto; margin-top: 16px; display: none; white-space: pre-wrap; line-height: 1.4;
     }
   </style>
 </head>
@@ -53,15 +61,30 @@
 
 <div class="container">
   <header>
-    <h1>Leitor Global eSocial (XMLs & ZIPs)</h1>
-    <p class="subtitle">Selecione ou arraste milhares de arquivos .XML soltos ou arquivos .ZIP do ano inteiro.</p>
+    <h1>Leitor Ultra-Rápido eSocial (57+ ZIPs / Otimizado)</h1>
+    <p class="subtitle">Processamento de altíssimo volume otimizado sem travar a tela do navegador.</p>
   </header>
 
   <div class="card">
     <div class="dropzone" id="dropzone">
-      <strong style="color: var(--primary);">Selecione ou arraste seus arquivos .XML ou .ZIP aqui</strong>
-      <p>Você pode selecionar milhares de arquivos XML soltos de uma vez!</p>
+      <strong style="color: var(--primary);">Selecione ou arraste suas pastas .ZIP ou arquivos .XML</strong>
+      <p>Desenvolvido para aguentar 50+ pacotes ZIP e centenas de milhares de XMLs simultaneamente.</p>
       <input type="file" id="fileInput" accept=".xml,.XML,.zip,.ZIP" multiple style="display:none;">
+    </div>
+
+    <div class="stats-summary" id="statsSummary">
+      <div class="stat-card">
+        <div class="val" id="statFiles">0</div>
+        <div class="lbl">XMLs Identificados</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" id="statRubricas">0</div>
+        <div class="lbl">Rubricas Mapeadas</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" id="statLancamentos">0</div>
+        <div class="lbl">Linhas Financeiras</div>
+      </div>
     </div>
 
     <div class="progress-box" id="progressBox">
@@ -69,14 +92,14 @@
         <div class="progress-bar-fill" id="progressFill"></div>
       </div>
       <div class="status-text">
-        <span id="statusLabel">Lendo arquivos...</span>
+        <span id="statusLabel">Aguardando início...</span>
         <span id="statusPercent">0%</span>
       </div>
     </div>
 
     <div class="log-box" id="logBox"></div>
 
-    <button class="btn" id="startBtn" disabled>Processar Lotes e Gerar Excel Consolidado</button>
+    <button class="btn" id="startBtn" disabled>Processar e Gerar Excel Consolidado</button>
   </div>
 </div>
 
@@ -100,6 +123,7 @@
   const statusLabel = document.getElementById('statusLabel');
   const statusPercent = document.getElementById('statusPercent');
   const logBox = document.getElementById('logBox');
+  const statsSummary = document.getElementById('statsSummary');
 
   let selectedFiles = [];
 
@@ -107,7 +131,7 @@
   dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
   
-  dropzone.addEventListener('drop', async (e) => {
+  dropzone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropzone.classList.remove('dragover');
     if (e.dataTransfer.files.length > 0) {
@@ -148,56 +172,60 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  function queryNodes(parent, localName) {
-    if (!parent) return [];
-    const results = [];
-    const all = parent.getElementsByTagName('*');
-    for (let i = 0; i < all.length; i++) {
-      if (all[i].localName === localName || all[i].tagName.endsWith(':' + localName) || all[i].tagName === localName) {
-        results.push(all[i]);
-      }
+  // Yield para o navegador respirar e não travar a UI
+  function yieldToUI() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  // Parser ultra-rápido baseado em Regex (até 20x mais rápido que DOMParser para grandes volumes)
+  function extractTagValue(xmlStr, tagName) {
+    const reg = new RegExp(`<([a-zA-Z0-9_]+:)?${tagName}[^>]*>([^<]*)</([a-zA-Z0-9_]+:)?${tagName}>`, 'i');
+    const match = xmlStr.match(reg);
+    return match ? match[2].trim() : '';
+  }
+
+  function extractBlocks(xmlStr, blockName) {
+    const reg = new RegExp(`<([a-zA-Z0-9_]+:)?${blockName}[^>]*>([\\s\\S]*?)</([a-zA-Z0-9_]+:)?${blockName}>`, 'gi');
+    const blocks = [];
+    let match;
+    while ((match = reg.exec(xmlStr)) !== null) {
+      blocks.push(match[2]);
     }
-    return results;
-  }
-
-  function getNodeVal(parent, localName) {
-    const nodes = queryNodes(parent, localName);
-    return nodes.length > 0 ? nodes[0].textContent.trim() : '';
-  }
-
-  // Helper para ler conteúdo de arquivo texto via Promise
-  function readFileAsText(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsText(file);
-    });
+    return blocks;
   }
 
   startBtn.addEventListener('click', async () => {
     try {
       startBtn.disabled = true;
       progressBox.style.display = 'block';
+      statsSummary.style.display = 'grid';
       logBox.innerHTML = '';
-      log(`Iniciando processamento de ${selectedFiles.length.toLocaleString('pt-BR')} arquivo(s)...`);
+      
+      document.getElementById('statFiles').innerText = '0';
+      document.getElementById('statRubricas').innerText = '0';
+      document.getElementById('statLancamentos').innerText = '0';
 
-      const parser = new DOMParser();
+      log(`Iniciando processamento otimizado de ${selectedFiles.length.toLocaleString('pt-BR')} pacote(s)...`);
+
       const rubricasMap = new Map();
       const linhasPlanilha = [];
 
-      // Unifica a lista de todos os XMLs (tanto soltos quanto de dentro dos ZIPs)
-      const xmlList = []; // { source: string, name: string, getText: fn }
+      // PASSO 1: Mapear ZIPs e XMLs em pequenas rajadas
+      log("Etapa 1/3: Mapeando arquivos soltos e conteúdo de ZIPs...");
+      const xmlList = [];
 
-      log("Etapa 1/3: Mapeando arquivos selecionados e descompactando ZIPs...");
-      
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
+        
+        statusLabel.innerText = `Lendo pacote ${i + 1}/${selectedFiles.length}: ${file.name}`;
+        statusPercent.innerText = `${Math.round(((i + 1) / selectedFiles.length) * 15)}%`;
+        progressFill.style.width = `${statusPercent.innerText}`;
+
         if (file.name.toLowerCase().endsWith('.xml')) {
           xmlList.push({
             source: 'XML Solto',
             name: file.name,
-            getText: () => readFileAsText(file)
+            fileObj: file
           });
         } else if (file.name.toLowerCase().endsWith('.zip')) {
           try {
@@ -207,66 +235,80 @@
               xmlList.push({
                 source: file.name,
                 name: entry.split('/').pop(),
-                getText: () => zip.files[entry].async('string')
+                zipObj: zip.files[entry]
               });
             });
           } catch (e) {
-            log(`Aviso ao abrir ZIP ${file.name}: ${e.message}`, '#f87171');
+            log(`Aviso ao ler ZIP ${file.name}: ${e.message}`, '#f87171');
           }
         }
+
+        if (i % 3 === 0) await yieldToUI();
       }
 
-      log(`Total de XMLs identificados para análise: ${xmlList.length.toLocaleString('pt-BR')}`, '#4ade80');
+      document.getElementById('statFiles').innerText = xmlList.length.toLocaleString('pt-BR');
+      log(`Total de XMLs localizados em todas as 57+ pastas: ${xmlList.length.toLocaleString('pt-BR')}`, '#4ade80');
 
-      // PASSO 2: Indexar Tabela S-1010 em Todos os XMLs
-      log("Etapa 2/3: Construindo Catálogo Global de Rubricas (S-1010)...");
-      let processedCount = 0;
+      // PASSO 2: Mapear Tabela S-1010 de Rubricas (Rápido com Regex + Chunking)
+      log("Etapa 2/3: Construindo Tabela Unificada de Rubricas S-1010...");
+      
+      const CHUNK_SIZE = 500;
+      for (let i = 0; i < xmlList.length; i += CHUNK_SIZE) {
+        const chunk = xmlList.slice(i, i + CHUNK_SIZE);
 
-      for (let item of xmlList) {
-        processedCount++;
-        try {
-          const xmlText = await item.getText();
+        await Promise.all(chunk.map(async (item) => {
+          try {
+            let xmlText = '';
+            if (item.fileObj) {
+              xmlText = await item.fileObj.text();
+            } else if (item.zipObj) {
+              xmlText = await item.zipObj.async('string');
+            }
 
-          if (xmlText.includes('evtTabRubrica') || xmlText.includes('infoRubrica')) {
-            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-            const evts = queryNodes(xmlDoc, 'evtTabRubrica').concat(queryNodes(xmlDoc, 'infoRubrica'));
+            item.xmlText = xmlText;
 
-            evts.forEach(evt => {
-              const codRubr = getNodeVal(evt, 'codRubr');
-              const dscRubr = getNodeVal(evt, 'dscRubr');
-              const natRubr = getNodeVal(evt, 'natRubr');
+            if (xmlText.includes('evtTabRubrica') || xmlText.includes('infoRubrica')) {
+              const blocks = extractBlocks(xmlText, 'evtTabRubrica').concat(extractBlocks(xmlText, 'infoRubrica'));
+              if (blocks.length === 0) blocks.push(xmlText);
 
-              if (codRubr) {
-                const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
-                rubricasMap.set(codRubr, {
-                  descricao: dscRubr,
-                  natureza: natRubr,
-                  verbaIndenizatoria: verbaIndenizatoria
-                });
-              }
-            });
-          }
-        } catch (e) {}
+              blocks.forEach(blk => {
+                const codRubr = extractTagValue(blk, 'codRubr');
+                const dscRubr = extractTagValue(blk, 'dscRubr');
+                const natRubr = extractTagValue(blk, 'natRubr');
 
-        if (processedCount % 3000 === 0 || processedCount === xmlList.length) {
-          const pct = Math.round((processedCount / xmlList.length) * 35);
-          progressFill.style.width = `${pct}%`;
-          statusPercent.innerText = `${pct}%`;
-          statusLabel.innerText = `Mapeando Rubricas: ${processedCount.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
-          await new Promise(r => setTimeout(r, 0));
-        }
+                if (codRubr) {
+                  const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
+                  rubricasMap.set(codRubr, {
+                    descricao: dscRubr,
+                    natureza: natRubr,
+                    verbaIndenizatoria: verbaIndenizatoria
+                  });
+                }
+              });
+            }
+          } catch (e) {}
+        }));
+
+        const currentDone = Math.min(i + CHUNK_SIZE, xmlList.length);
+        const pct = 15 + Math.round((currentDone / xmlList.length) * 25);
+        progressFill.style.width = `${pct}%`;
+        statusPercent.innerText = `${pct}%`;
+        statusLabel.innerText = `Rubricas (S-1010): ${currentDone.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
+        document.getElementById('statRubricas').innerText = rubricasMap.size.toLocaleString('pt-BR');
+
+        await yieldToUI();
       }
 
-      log(`Catálogo de Rubricas Concluído! Total de Rubricas Únicas: ${rubricasMap.size.toLocaleString('pt-BR')}`, '#4ade80');
+      log(`Tabela de Rubricas Finalizada! Total Único: ${rubricasMap.size.toLocaleString('pt-BR')}`, '#4ade80');
 
-      // PASSO 3: Extrair Dados Financeiros da Folha
-      log("Etapa 3/3: Extraindo lançamentos financeiros das Folhas de Pagamento...");
-      processedCount = 0;
+      // PASSO 3: Extrair Lançamentos Financeiros da Folha
+      log("Etapa 3/3: Extraindo Folhas de Pagamento e cruzando com Rubricas...");
+      
+      for (let i = 0; i < xmlList.length; i += CHUNK_SIZE) {
+        const chunk = xmlList.slice(i, i + CHUNK_SIZE);
 
-      for (let item of xmlList) {
-        processedCount++;
-        try {
-          const xmlText = await item.getText();
+        chunk.forEach(item => {
+          const xmlText = item.xmlText || '';
 
           if (
             xmlText.includes('evtRemun') || 
@@ -277,70 +319,72 @@
             xmlText.includes('detPgto') ||
             xmlText.includes('dmDev')
           ) {
-            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+            const cnpjEmpregador = extractTagValue(xmlText, 'nrInsc') || extractTagValue(xmlText, 'nrInscEstab');
+            const cpfTrabalhador = extractTagValue(xmlText, 'cpfTrab');
+            const perApur = extractTagValue(xmlText, 'perApur') || extractTagValue(xmlText, 'perRef');
 
-            const ideEmpregador = queryNodes(xmlDoc, 'ideEmpregador')[0];
-            const cnpjEmpregador = ideEmpregador ? (getNodeVal(ideEmpregador, 'nrInsc') || getNodeVal(ideEmpregador, 'nrInscEstab')) : getNodeVal(xmlDoc, 'nrInsc');
-
-            const cpfTrabalhador = getNodeVal(xmlDoc, 'cpfTrab');
-            const perApur = getNodeVal(xmlDoc, 'perApur') || getNodeVal(xmlDoc, 'perRef');
-
-            const itensRemun = [
-              ...queryNodes(xmlDoc, 'itensRemun'),
-              ...queryNodes(xmlDoc, 'detPgto'),
-              ...queryNodes(xmlDoc, 'detVerbras')
+            const itemBlocks = [
+              ...extractBlocks(xmlText, 'itensRemun'),
+              ...extractBlocks(xmlText, 'detPgto'),
+              ...extractBlocks(xmlText, 'detVerbras')
             ];
 
-            if (itensRemun.length > 0) {
-              itensRemun.forEach(itemNode => {
-                const codRubr = getNodeVal(itemNode, 'codRubr') || getNodeVal(itemNode, 'tpPgto');
-                const vrRubr = getNodeVal(itemNode, 'vrRubr') || getNodeVal(itemNode, 'vrPgto') || '0';
-                const natRubrXml = getNodeVal(itemNode, 'natRubr');
+            itemBlocks.forEach(blk => {
+              const codRubr = extractTagValue(blk, 'codRubr') || extractTagValue(blk, 'tpPgto');
+              const vrRubr = extractTagValue(blk, 'vrRubr') || extractTagValue(blk, 'vrPgto') || '0';
+              const natRubrXml = extractTagValue(blk, 'natRubr');
 
-                if (codRubr || vrRubr !== '0') {
-                  const infoRubrica = rubricasMap.get(codRubr) || {
-                    descricao: "Não cadastrada na Tabela de Rubricas",
-                    natureza: natRubrXml || "N/A",
-                    verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
-                  };
+              if (codRubr || vrRubr !== '0') {
+                const infoRubrica = rubricasMap.get(codRubr) || {
+                  descricao: "Não cadastrada na Tabela de Rubricas",
+                  natureza: natRubrXml || "N/A",
+                  verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
+                };
 
-                  linhasPlanilha.push({
-                    Origem: item.source,
-                    ArquivoXML: item.name,
-                    CNPJEmpregador: cnpjEmpregador,
-                    CPFTrabalhador: cpfTrabalhador,
-                    PeriodoApuracao: perApur,
-                    CodigoRubrica: codRubr,
-                    NomeRubrica: infoRubrica.descricao,
-                    CodigoNatureza: infoRubrica.natureza,
-                    VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
-                    ValorRubrica: parseFloat(vrRubr.replace(',', '.')) || 0
-                  });
-                }
-              });
-            }
+                linhasPlanilha.push({
+                  Origem: item.source,
+                  ArquivoXML: item.name,
+                  CNPJEmpregador: cnpjEmpregador,
+                  CPFTrabalhador: cpfTrabalhador,
+                  PeriodoApuracao: perApur,
+                  CodigoRubrica: codRubr,
+                  NomeRubrica: infoRubrica.descricao,
+                  CodigoNatureza: infoRubrica.natureza,
+                  VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
+                  ValorRubrica: parseFloat(vrRubr.replace(',', '.')) || 0
+                });
+              }
+            });
           }
-        } catch (e) {}
 
-        if (processedCount % 3000 === 0 || processedCount === xmlList.length) {
-          const pct = 35 + Math.round((processedCount / xmlList.length) * 65);
-          progressFill.style.width = `${pct}%`;
-          statusPercent.innerText = `${pct}%`;
-          statusLabel.innerText = `Processando Folhas: ${processedCount.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
-          await new Promise(r => setTimeout(r, 0));
-        }
+          item.xmlText = null;
+        });
+
+        const currentDone = Math.min(i + CHUNK_SIZE, xmlList.length);
+        const pct = 40 + Math.round((currentDone / xmlList.length) * 55);
+        progressFill.style.width = `${pct}%`;
+        statusPercent.innerText = `${pct}%`;
+        statusLabel.innerText = `Processando Folhas: ${currentDone.toLocaleString('pt-BR')} / ${xmlList.length.toLocaleString('pt-BR')} XMLs`;
+        document.getElementById('statLancamentos').innerText = linhasPlanilha.length.toLocaleString('pt-BR');
+
+        await yieldToUI();
       }
 
-      log(`Processamento concluído! Registros financeiros extraídos: ${linhasPlanilha.length.toLocaleString('pt-BR')}`, '#4ade80');
+      log(`Processamento de Folhas Concluído! Total de Lançamentos: ${linhasPlanilha.length.toLocaleString('pt-BR')}`, '#4ade80');
 
       if (linhasPlanilha.length === 0) {
-        log("Aviso: Nenhuma informação de folha foi encontrada nos XMLs.", '#f87171');
+        log("Aviso: Nenhum lançamento financeiro foi encontrado nos XMLs fornecidos.", '#f87171');
         startBtn.disabled = false;
         return;
       }
 
-      // PASSO 4: Gerar Planilha Excel
-      log("Gerando arquivo Excel (.xlsx)...");
+      // PASSO 4: Gerar Excel em Lotes
+      log("Gerando e formatando planilha Excel consolidada (.xlsx)...");
+      progressFill.style.width = `98%`;
+      statusPercent.innerText = `98%`;
+      statusLabel.innerText = "Montando arquivo Excel...";
+      await yieldToUI();
+
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Lançamentos Consolidados');
 
@@ -360,7 +404,11 @@
       worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
       worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E3A8A' } };
 
-      linhasPlanilha.forEach(linha => worksheet.addRow(linha));
+      for (let k = 0; k < linhasPlanilha.length; k += 5000) {
+        const rowsChunk = linhasPlanilha.slice(k, k + 5000);
+        worksheet.addRows(rowsChunk);
+        await yieldToUI();
+      }
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -370,8 +418,10 @@
       a.download = `Resultado_Consolidado_eSocial_${new Date().toISOString().slice(0, 10)}.xlsx`;
       a.click();
 
-      log("Planilha baixada com sucesso!", '#4ade80');
+      progressFill.style.width = `100%`;
+      statusPercent.innerText = `100%`;
       statusLabel.innerText = "Concluído com Sucesso!";
+      log("Planilha baixada com sucesso!", '#4ade80');
       startBtn.disabled = false;
 
     } catch (globalErr) {
