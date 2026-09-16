@@ -20,7 +20,7 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background-color: var(--bg-color); color: var(--text-main); padding: 40px 20px; display: flex; justify-content: center; }
-    .container { max-width: 800px; width: 100%; }
+    .container { max-width: 850px; width: 100%; }
     header { margin-bottom: 24px; text-align: center; }
     h1 { font-size: 1.75rem; color: var(--text-main); font-weight: 700; margin-bottom: 8px; }
     p.subtitle { color: var(--text-muted); font-size: 0.95rem; }
@@ -46,7 +46,7 @@
     .status-text { font-size: 0.85rem; color: var(--text-muted); display: flex; justify-content: space-between; }
 
     .log-box {
-      background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 6px; height: 140px; overflow-y: auto; margin-top: 16px; display: none;
+      background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 6px; height: 180px; overflow-y: auto; margin-top: 16px; display: none; white-space: pre-wrap;
     }
   </style>
 </head>
@@ -55,14 +55,14 @@
 <div class="container">
   <header>
     <h1>Leitor de XMLs eSocial (Folha & Rubricas)</h1>
-    <p class="subtitle">Importe o lote de XMLs (S-1010, S-1200, S-1210) ou arquivo ZIP para cruzar verbas e extrair a planilha.</p>
+    <p class="subtitle">Importe o lote de arquivos eSocial (S-1010, S-1200, S-1210, etc.) ou ZIP para extrair a planilha.</p>
   </header>
 
   <div class="card">
     <div class="dropzone" id="dropzone">
-      <strong style="color: var(--primary);">Clique ou arraste seus arquivos XML / ZIP aqui</strong>
-      <p>Suporta múltiplos XMLs ou pasta compactada de até 5 anos</p>
-      <input type="file" id="fileInput" multiple accept=".xml,.zip" style="display:none;">
+      <strong style="color: var(--primary);">Clique ou arraste seus arquivos ou ZIP aqui</strong>
+      <p>Suporta arquivos do eSocial com qualquer extensão (.S-1200, .S-1210, .xml, .zip)</p>
+      <input type="file" id="fileInput" multiple accept="*/*" style="display:none;">
     </div>
 
     <div class="progress-box" id="progressBox">
@@ -82,7 +82,6 @@
 </div>
 
 <script>
-  // Tabela de De-Para: Naturezas do eSocial vs. Enquadramento da Verba Indenizatória
   const DE_PARA_VERBAS = {
     "1020": "Aviso Prévio Indenizado",
     "1022": "Terço Constitucional de Férias",
@@ -127,170 +126,220 @@
     }
   }
 
-  function log(msg) {
+  function log(msg, color = '#38bdf8') {
     logBox.style.display = 'block';
-    logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+    logBox.innerHTML += `<div style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  startBtn.addEventListener('click', async () => {
-    startBtn.disabled = true;
-    progressBox.style.display = 'block';
-    logBox.innerHTML = '';
-    log("Iniciando leitura dos XMLs...");
+  function findNodesByTag(obj, targetTag) {
+    let results = [];
+    if (!obj || typeof obj !== 'object') return results;
 
-    const fxParser = new fxp.XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-    const rubricasMap = new Map();
-    const linhasPlanilha = [];
-
-    let xmlFiles = [];
-
-    for (let f of selectedFiles) {
-      if (f.name.endsWith('.zip')) {
-        log(`Descompactando ZIP: ${f.name}`);
-        const zip = await JSZip.loadAsync(f);
-        for (let relativePath in zip.files) {
-          if (relativePath.endsWith('.xml')) {
-            const content = await zip.files[relativePath].async('string');
-            xmlFiles.push({ name: relativePath, content });
-          }
-        }
-      } else if (f.name.endsWith('.xml')) {
-        const content = await f.text();
-        xmlFiles.push({ name: f.name, content });
+    for (let key in obj) {
+      const cleanKey = key.replace(/^.*:/, ''); 
+      if (cleanKey.toLowerCase() === targetTag.toLowerCase()) {
+        results.push(obj[key]);
+      } else if (typeof obj[key] === 'object') {
+        results = results.concat(findNodesByTag(obj[key], targetTag));
       }
     }
+    return results;
+  }
 
-    log(`Total de ${xmlFiles.length} arquivos XML para processar.`);
+  startBtn.addEventListener('click', async () => {
+    try {
+      startBtn.disabled = true;
+      progressBox.style.display = 'block';
+      logBox.innerHTML = '';
+      log("Iniciando carregamento dos arquivos...");
 
-    // PASSO 1: Mapear todas as rubricas (S-1010)
-    xmlFiles.forEach((file) => {
-      try {
-        const parsed = fxParser.parse(file.content);
-        const esocial = parsed.eSocial || parsed.eSocialObj || {};
-        
-        if (esocial.evtTabRubrica) {
-          const info = esocial.evtTabRubrica.infoRubrica || {};
-          const dados = info.inclusao || info.alteracao || {};
-          const dadosRubrica = dados.dadosRubrica || {};
-          
-          const codRubr = dadosRubrica.codRubr || info['@_id'] || '';
-          const dscRubr = dadosRubrica.dscRubr || '';
-          const natRubr = String(dadosRubrica.natRubr || '');
-          const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
+      const fxParser = new fxp.XMLParser({ 
+        ignoreAttributes: false, 
+        attributeNamePrefix: "@_",
+        removeNSPrefix: true 
+      });
 
-          if (codRubr) {
-            rubricasMap.set(codRubr, {
-              descricao: dscRubr,
-              natureza: natRubr,
-              verbaIndenizatoria: verbaIndenizatoria
-            });
+      const rubricasMap = new Map();
+      const linhasPlanilha = [];
+      let xmlFiles = [];
+
+      // 1. Descompacta ZIPs e aceita QUALQUER arquivo retornado
+      for (let f of selectedFiles) {
+        if (f.name.toLowerCase().endsWith('.zip')) {
+          log(`Descompactando ZIP: ${f.name}...`);
+          try {
+            const zip = await JSZip.loadAsync(f);
+            const entries = Object.keys(zip.files);
+            log(`Arquivos encontrados no ZIP: ${entries.length}`);
+
+            for (let relativePath in zip.files) {
+              if (!zip.files[relativePath].dir) {
+                const content = await zip.files[relativePath].async('string');
+                xmlFiles.push({ name: relativePath, content });
+              }
+            }
+          } catch (errZip) {
+            log(`Erro ao descompactar ${f.name}: ${errZip.message}`, '#f87171');
           }
+        } else {
+          const content = await f.text();
+          xmlFiles.push({ name: f.name, content });
         }
-      } catch (err) {}
-    });
+      }
 
-    log(`Mapeamento S-1010 finalizado: ${rubricasMap.size} rubricas catalogadas.`);
+      log(`Total de arquivos carregados para análise: ${xmlFiles.length}`);
 
-    // PASSO 2: Extrair movimentações da folha (S-1200 / S-1210 / etc.)
-    let processedCount = 0;
+      if (xmlFiles.length === 0) {
+        log("Nenhum arquivo carregado.", '#f87171');
+        startBtn.disabled = false;
+        return;
+      }
 
-    for (let file of xmlFiles) {
-      processedCount++;
-      const percent = Math.round((processedCount / xmlFiles.length) * 100);
-      progressFill.style.width = `${percent}%`;
-      statusPercent.innerText = `${percent}%`;
-      statusLabel.innerText = `Lendo XML ${processedCount} de ${xmlFiles.length}...`;
+      // 2. Mapeamento S-1010
+      log("Mapeando rubricas (S-1010)...");
+      xmlFiles.forEach((file) => {
+        try {
+          if (!file.content.includes('<')) return; // ignora se não for conteúdo estruturado
+          const parsed = fxParser.parse(file.content);
+          const nodesS1010 = findNodesByTag(parsed, 'evtTabRubrica');
 
-      try {
-        const parsed = fxParser.parse(file.content);
-        const esocial = parsed.eSocial || {};
+          nodesS1010.forEach(evt => {
+            const infoRubrica = evt.infoRubrica || {};
+            const dados = infoRubrica.inclusao || infoRubrica.alteracao || {};
+            const dadosRubrica = dados.dadosRubrica || {};
 
-        const evtRemun = esocial.evtRemunPkey || esocial.evtRemun || esocial.evtPgtos;
-        
-        if (evtRemun) {
-          const ideEmpregador = evtRemun.ideEmpregador || {};
-          const ideTrabalhador = evtRemun.ideTrabalhador || {};
-          const cnpj = ideEmpregador.nrInsc || '';
-          const cpf = ideTrabalhador.cpfTrab || '';
-          const perApur = evtRemun.ideEvento ? evtRemun.ideEvento.perApur : '';
+            const codRubr = dadosRubrica.codRubr || '';
+            const dscRubr = dadosRubrica.dscRubr || '';
+            const natRubr = String(dadosRubrica.natRubr || '');
+            const verbaIndenizatoria = DE_PARA_VERBAS[natRubr] || "Verba Remuneratória / Outros";
 
-          let itens = [];
-          const dmDev = evtRemun.dmDev || evtRemun.infoPgto || [];
-          const listDmDev = Array.isArray(dmDev) ? dmDev : [dmDev];
+            if (codRubr) {
+              rubricasMap.set(codRubr, {
+                descricao: dscRubr,
+                natureza: natRubr,
+                verbaIndenizatoria: verbaIndenizatoria
+              });
+            }
+          });
+        } catch (e) {}
+      });
 
-          listDmDev.forEach(dm => {
-            const infoPerApur = dm.infoPerApur || dm.infoPerAnt || {};
-            const ideEstab = infoPerApur.ideEstab || dm.ideEstab || [];
-            const listEstab = Array.isArray(ideEstab) ? ideEstab : [ideEstab];
+      log(`Rubricas (S-1010) catalogadas: ${rubricasMap.size}`);
 
-            listEstab.forEach(est => {
-              const itensRemun = est.itensRemun || est.detPgto || [];
-              const listItens = Array.isArray(itensRemun) ? itensRemun : [itensRemun];
+      // 3. Leitura dos eventos de folha
+      let processedCount = 0;
 
-              listItens.forEach(it => {
-                const codRubr = it.codRubr || it.tpPgto || '';
-                const vrRubr = it.vrRubr || it.vrPgto || 0;
-                
-                const infoRubrica = rubricasMap.get(codRubr) || {
-                  descricao: "Desconhecida (Sem S-1010)",
-                  natureza: "N/A",
-                  verbaIndenizatoria: DE_PARA_VERBAS[it.natRubr] || "Verba Remuneratória / Outros"
-                };
+      for (let file of xmlFiles) {
+        processedCount++;
+        const percent = Math.round((processedCount / xmlFiles.length) * 100);
+        progressFill.style.width = `${percent}%`;
+        statusPercent.innerText = `${percent}%`;
+        statusLabel.innerText = `Processando ${processedCount} de ${xmlFiles.length}...`;
 
-                linhasPlanilha.push({
-                  Arquivo: file.name,
-                  CNPJEmpregador: cnpj,
-                  CPFTrabalhador: cpf,
-                  PeriodoApuracao: perApur,
-                  CodigoRubrica: codRubr,
-                  NomeRubrica: infoRubrica.descricao,
-                  CodigoNatureza: infoRubrica.natureza,
-                  VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
-                  ValorRubrica: parseFloat(vrRubr) || 0
+        try {
+          if (!file.content.includes('<')) continue;
+          const parsed = fxParser.parse(file.content);
+
+          const evtsRemun = [
+            ...findNodesByTag(parsed, 'evtRemun'),
+            ...findNodesByTag(parsed, 'evtPgtos'),
+            ...findNodesByTag(parsed, 'evtRscResc')
+          ];
+
+          evtsRemun.forEach(evt => {
+            const ideEmpregador = evt.ideEmpregador || {};
+            const ideTrabalhador = evt.ideTrabalhador || {};
+            const cnpj = ideEmpregador.nrInsc || '';
+            const cpf = ideTrabalhador.cpfTrab || '';
+            const perApur = evt.ideEvento ? evt.ideEvento.perApur : '';
+
+            const dmDevs = findNodesByTag(evt, 'dmDev');
+            const infoPgtos = findNodesByTag(evt, 'infoPgto');
+            const subNodes = [...dmDevs, ...infoPgtos];
+
+            subNodes.forEach(sub => {
+              const itensRemun = findNodesByTag(sub, 'itensRemun');
+              const detPgtos = findNodesByTag(sub, 'detPgto');
+              const todosItens = [...itensRemun, ...detPgtos];
+
+              todosItens.forEach(it => {
+                const listItens = Array.isArray(it) ? it : [it];
+                listItens.forEach(item => {
+                  const codRubr = item.codRubr || item.tpPgto || '';
+                  const vrRubr = item.vrRubr || item.vrPgto || 0;
+                  const natRubrXml = String(item.natRubr || '');
+
+                  if (codRubr || vrRubr) {
+                    const infoRubrica = rubricasMap.get(codRubr) || {
+                      descricao: "Não cadastrada no S-1010",
+                      natureza: natRubrXml || "N/A",
+                      verbaIndenizatoria: DE_PARA_VERBAS[natRubrXml] || "Verba Remuneratória / Outros"
+                    };
+
+                    linhasPlanilha.push({
+                      Arquivo: file.name,
+                      CNPJEmpregador: cnpj,
+                      CPFTrabalhador: cpf,
+                      PeriodoApuracao: perApur,
+                      CodigoRubrica: codRubr,
+                      NomeRubrica: infoRubrica.descricao,
+                      CodigoNatureza: infoRubrica.natureza,
+                      VerbaIndenizatoria: infoRubrica.verbaIndenizatoria,
+                      ValorRubrica: parseFloat(vrRubr) || 0
+                    });
+                  }
                 });
               });
             });
           });
+        } catch (errItem) {}
+
+        if (processedCount % 50 === 0 || processedCount === xmlFiles.length) {
+          await new Promise(r => setTimeout(r, 0));
         }
-      } catch (err) {}
+      }
+
+      log(`Total de linhas extraídas: ${linhasPlanilha.length}`);
+
+      // 4. Download da Planilha Excel
+      log("Gerando arquivo Excel (.xlsx)...");
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Folha & Rubricas');
+
+      worksheet.columns = [
+        { header: 'Arquivo', key: 'Arquivo', width: 30 },
+        { header: 'CNPJ Empregador', key: 'CNPJEmpregador', width: 18 },
+        { header: 'CPF Trabalhador', key: 'CPFTrabalhador', width: 16 },
+        { header: 'Período Apuração', key: 'PeriodoApuracao', width: 15 },
+        { header: 'Cód. Rubrica', key: 'CodigoRubrica', width: 15 },
+        { header: 'Nome da Rubrica', key: 'NomeRubrica', width: 30 },
+        { header: 'Cód. Natureza', key: 'CodigoNatureza', width: 15 },
+        { header: 'Verba Indenizatória (Cruzamento)', key: 'VerbaIndenizatoria', width: 35 },
+        { header: 'Valor (R$)', key: 'ValorRubrica', width: 16, style: { numFmt: '"R$"#,##0.00' } }
+      ];
+
+      worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
+      worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E3A8A' } };
+
+      linhasPlanilha.forEach(linha => worksheet.addRow(linha));
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Resultado_eSocial_Folha_Rubricas.xlsx`;
+      a.click();
+
+      log("Planilha baixada com sucesso!", '#4ade80');
+      statusLabel.innerText = "Concluído!";
+      startBtn.disabled = false;
+
+    } catch (globalErr) {
+      log(`Erro: ${globalErr.message}`, '#f87171');
+      startBtn.disabled = false;
     }
-
-    log(`Extração concluída: ${linhasPlanilha.length} linhas geradas.`);
-    log("Gerando arquivo Excel (.xlsx)...");
-
-    // PASSO 3: Exportar para Excel
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Folha & Rubricas');
-
-    worksheet.columns = [
-      { header: 'Arquivo XML', key: 'Arquivo', width: 25 },
-      { header: 'CNPJ Empregador', key: 'CNPJEmpregador', width: 18 },
-      { header: 'CPF Trabalhador', key: 'CPFTrabalhador', width: 16 },
-      { header: 'Período Apuração', key: 'PeriodoApuracao', width: 15 },
-      { header: 'Cód. Rubrica', key: 'CodigoRubrica', width: 15 },
-      { header: 'Nome da Rubrica', key: 'NomeRubrica', width: 30 },
-      { header: 'Cód. Natureza', key: 'CodigoNatureza', width: 15 },
-      { header: 'Verba Indenizatória (Cruzamento)', key: 'VerbaIndenizatoria', width: 35 },
-      { header: 'Valor (R$)', key: 'ValorRubrica', width: 16, style: { numFmt: '"R$"#,##0.00' } }
-    ];
-
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
-    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E3A8A' } };
-
-    linhasPlanilha.forEach(linha => worksheet.addRow(linha));
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Resultado_XMLs_Rubricas_eSocial.xlsx`;
-    a.click();
-
-    log("Planilha baixada com sucesso!");
-    statusLabel.innerText = "Concluído!";
-    startBtn.disabled = false;
   });
 </script>
 </body>
